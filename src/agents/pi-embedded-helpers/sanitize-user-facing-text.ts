@@ -122,7 +122,6 @@ export function formatTransportErrorCopy(raw: string): string | undefined {
   if (isCloudflareOrHtmlErrorPage(raw)) {
     return undefined;
   }
-
   const lower = normalizeLowercaseStringOrEmpty(raw);
 
   if (
@@ -143,10 +142,9 @@ export function formatTransportErrorCopy(raw: string): string | undefined {
   }
 
   if (
-    /\benotfound\b|\beai_again\b/i.test(raw) ||
+    /\benotfound\b|\beai_again\b|\bdns\b/i.test(raw) ||
     lower.includes("getaddrinfo") ||
-    lower.includes("no such host") ||
-    lower.includes("dns")
+    lower.includes("no such host")
   ) {
     return "LLM request failed: DNS lookup for the provider endpoint failed.";
   }

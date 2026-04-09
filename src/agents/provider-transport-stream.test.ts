@@ -45,13 +45,6 @@ describe("provider transport stream contracts", () => {
         alias: "openclaw-openai-responses-transport",
       },
       {
-        api: "openai-codex-responses" as const,
-        provider: "openai-codex",
-        id: "codex-mini-latest",
-        baseUrl: "https://chatgpt.com/backend-api",
-        alias: "openclaw-openai-responses-transport",
-      },
-      {
         api: "openai-completions" as const,
         provider: "xai",
         id: "grok-4",
@@ -110,6 +103,50 @@ describe("provider transport stream contracts", () => {
       expect(preparedModel.provider).toBe(testCase.provider);
       expect(preparedModel.id).toBe(testCase.id);
     }
+  });
+
+  it("keeps ChatGPT Codex on the native provider stream", () => {
+    const model = buildModel("openai-codex-responses", {
+      id: "gpt-5.4",
+      provider: "openai-codex",
+      baseUrl: "https://chatgpt.com/backend-api",
+    });
+
+    expect(isTransportAwareApiSupported(model.api)).toBe(false);
+    expect(resolveTransportAwareSimpleApi(model.api)).toBeUndefined();
+    expect(createBoundaryAwareStreamFnForModel(model)).toBeUndefined();
+    expect(createTransportAwareStreamFnForModel(model)).toBeUndefined();
+    expect(buildTransportAwareSimpleStreamFn(model)).toBeUndefined();
+    expect(prepareTransportAwareSimpleModel(model)).toBe(model);
+  });
+
+  it("fails closed when ChatGPT Codex carries transport overrides", () => {
+    const model = attachModelProviderRequestTransport(
+      buildModel("openai-codex-responses", {
+        id: "gpt-5.4",
+        provider: "openai-codex",
+        baseUrl: "https://chatgpt.com/backend-api",
+      }),
+      {
+        proxy: {
+          mode: "explicit-proxy",
+          url: "http://proxy.internal:8443",
+        },
+      },
+    );
+
+    expect(isTransportAwareApiSupported(model.api)).toBe(false);
+    expect(resolveTransportAwareSimpleApi(model.api)).toBeUndefined();
+    expect(createBoundaryAwareStreamFnForModel(model)).toBeUndefined();
+    expect(() => createTransportAwareStreamFnForModel(model)).toThrow(
+      'Model-provider request.proxy/request.tls is not yet supported for api "openai-codex-responses"',
+    );
+    expect(() => buildTransportAwareSimpleStreamFn(model)).toThrow(
+      'Model-provider request.proxy/request.tls is not yet supported for api "openai-codex-responses"',
+    );
+    expect(() => prepareTransportAwareSimpleModel(model)).toThrow(
+      'Model-provider request.proxy/request.tls is not yet supported for api "openai-codex-responses"',
+    );
   });
 
   it("fails closed when unsupported apis carry transport overrides", () => {

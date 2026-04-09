@@ -310,6 +310,11 @@ describe("isCloudflareOrHtmlErrorPage", () => {
     expect(isCloudflareOrHtmlErrorPage(htmlError)).toBe(true);
   });
 
+  it("detects generic 4xx HTML pages", () => {
+    const htmlError = `403 <html><head><title>Forbidden</title></head><body>challenge</body></html>`;
+    expect(isCloudflareOrHtmlErrorPage(htmlError)).toBe(true);
+  });
+
   it("does not flag non-HTML status lines", () => {
     expect(isCloudflareOrHtmlErrorPage("500 Internal Server Error")).toBe(false);
     expect(isCloudflareOrHtmlErrorPage("429 Too Many Requests")).toBe(false);

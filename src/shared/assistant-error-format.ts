@@ -119,7 +119,7 @@ export function isCloudflareOrHtmlErrorPage(raw: string): boolean {
   }
 
   const status = extractLeadingHttpStatus(trimmed);
-  if (!status || status.code < 500) {
+  if (!status || status.code < 400 || status.code >= 600) {
     return false;
   }
 
@@ -219,6 +219,9 @@ export function formatRawAssistantErrorForUi(raw?: string): string {
   const leadingStatus = extractLeadingHttpStatus(trimmed);
   const isHtmlChallenge = isCloudflareOrHtmlErrorPage(trimmed);
   if (leadingStatus && isHtmlChallenge) {
+    if (leadingStatus.code < 500) {
+      return `The AI service rejected the request (HTTP ${leadingStatus.code}).`;
+    }
     return `The AI service is temporarily unavailable (HTTP ${leadingStatus.code}). Please try again in a moment.`;
   }
 

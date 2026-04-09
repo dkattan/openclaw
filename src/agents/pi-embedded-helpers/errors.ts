@@ -5,6 +5,8 @@ import {
   extractLeadingHttpStatus,
   formatRawAssistantErrorForUi,
   isGenericProviderInternalError,
+  isCloudflareOrHtmlErrorPage,
+  parseApiErrorInfo,
 } from "../../shared/assistant-error-format.js";
 import {
   normalizeLowercaseStringOrEmpty,
@@ -68,7 +70,6 @@ export {
 } from "./failover-matches.js";
 
 const log = createSubsystemLogger("errors");
-
 export function isReasoningConstraintErrorMessage(raw: string): boolean {
   if (!raw) {
     return false;

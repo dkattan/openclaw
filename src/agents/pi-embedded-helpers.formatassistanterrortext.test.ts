@@ -265,6 +265,15 @@ describe("formatAssistantErrorText", () => {
     );
   });
 
+  it("does not misclassify HTML 403 pages as DNS failures", () => {
+    const msg = makeAssistantError(
+      "403 <html><head><title>Just a moment...</title></head><body>DNS verification required</body></html>",
+    );
+    expect(formatAssistantErrorText(msg)).toBe(
+      "Authentication failed with an HTML 403 response from the provider. Re-authenticate and verify your provider account access.",
+    );
+  });
+
   it("returns an interrupted-connection message for socket hang ups", () => {
     const msg = makeAssistantError("socket hang up");
     expect(formatAssistantErrorText(msg)).toBe(
