@@ -209,15 +209,47 @@ function parseSsConnections(output: string, port: number): PortConnection[] {
 }
 
 async function enrichUnixListenerProcessInfo(listeners: PortListener[]): Promise<void> {
+  const parentPidCache = new Map<number, Promise<number | undefined>>();
+  const getParentPid = (pid: number) => {
+    let cached = parentPidCache.get(pid);
+    if (!cached) {
+      cached = resolveUnixParentPid(pid);
+      parentPidCache.set(pid, cached);
+    }
+    return cached;
+  };
+
+  const resolveUnixAncestorPids = async (pid: number): Promise<number[] | undefined> => {
+    const ancestors: number[] = [];
+    const seen = new Set<number>([pid]);
+    let currentPid = pid;
+
+    for (let depth = 0; depth < 32; depth += 1) {
+      const parentPid = await getParentPid(currentPid);
+      if (parentPid === undefined || seen.has(parentPid)) {
+        break;
+      }
+      ancestors.push(parentPid);
+      seen.add(parentPid);
+      if (parentPid === 1) {
+        break;
+      }
+      currentPid = parentPid;
+    }
+
+    return ancestors.length > 0 ? ancestors : undefined;
+  };
+
   await Promise.all(
     listeners.map(async (listener) => {
       if (!listener.pid) {
         return;
       }
-      const [commandLine, user, parentPid] = await Promise.all([
+      const [commandLine, user, parentPid, ancestorPids] = await Promise.all([
         resolveUnixCommandLine(listener.pid),
         resolveUnixUser(listener.pid),
-        resolveUnixParentPid(listener.pid),
+        getParentPid(listener.pid),
+        resolveUnixAncestorPids(listener.pid),
       ]);
       if (commandLine) {
         listener.commandLine = commandLine;
@@ -227,6 +259,9 @@ async function enrichUnixListenerProcessInfo(listeners: PortListener[]): Promise
       }
       if (parentPid !== undefined) {
         listener.ppid = parentPid;
+      }
+      if (ancestorPids) {
+        listener.ancestorPids = ancestorPids;
       }
     }),
   );
