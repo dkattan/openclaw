@@ -179,6 +179,28 @@ describe("inspectGatewayRestart", () => {
     expect(snapshot.staleGatewayPids).toStrictEqual([]);
   });
 
+  it("treats a gateway listener descendant pid as healthy ownership", async () => {
+    const snapshot = await inspectGatewayRestartWithSnapshot({
+      runtime: { status: "running", pid: 7000 },
+      portUsage: {
+        port: 18789,
+        status: "busy",
+        listeners: [
+          {
+            pid: 7002,
+            ppid: 7001,
+            ancestorPids: [7001, 7000, 1],
+            commandLine: "openclaw-gateway",
+          },
+        ],
+        hints: [],
+      },
+    });
+
+    expect(snapshot.healthy).toBe(true);
+    expect(snapshot.staleGatewayPids).toEqual([]);
+  });
+
   it("marks non-owned gateway listener pids as stale while runtime is running", async () => {
     const snapshot = await inspectGatewayRestartWithSnapshot({
       runtime: { status: "running", pid: 8000 },

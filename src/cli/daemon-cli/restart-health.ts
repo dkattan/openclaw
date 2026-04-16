@@ -83,7 +83,11 @@ function listenerOwnedByRuntimePid(params: {
   listener: PortUsage["listeners"][number];
   runtimePid: number;
 }): boolean {
-  return params.listener.pid === params.runtimePid || params.listener.ppid === params.runtimePid;
+  return (
+    params.listener.pid === params.runtimePid ||
+    params.listener.ppid === params.runtimePid ||
+    params.listener.ancestorPids?.includes(params.runtimePid) === true
+  );
 }
 
 function looksLikeAuthClose(code: number | undefined, reason: string | undefined): boolean {

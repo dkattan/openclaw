@@ -1,6 +1,7 @@
 export type PortListener = {
   pid?: number;
   ppid?: number;
+  ancestorPids?: number[];
   command?: string;
   commandLine?: string;
   user?: string;
