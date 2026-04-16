@@ -621,6 +621,7 @@ export async function gatherDaemonStatus(
               service,
               port: daemonPort,
               env: serviceEnv,
+              probeAuth: daemonProbeAuth,
             }),
           )
           .catch(() => undefined)

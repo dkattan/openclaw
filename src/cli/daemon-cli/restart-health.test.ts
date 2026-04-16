@@ -65,6 +65,7 @@ async function inspectGatewayRestartWithSnapshot(params: {
   runtime: { status: "running"; pid: number } | { status: "stopped" };
   portUsage: PortUsage;
   expectedVersion?: string;
+  probeAuth?: { token?: string; password?: string };
   includeUnknownListenersAsStale?: boolean;
 }) {
   const service = makeGatewayService(params.runtime);
@@ -74,6 +75,7 @@ async function inspectGatewayRestartWithSnapshot(params: {
     service,
     port: 18789,
     ...(params.expectedVersion === undefined ? {} : { expectedVersion: params.expectedVersion }),
+    ...(params.probeAuth === undefined ? {} : { probeAuth: params.probeAuth }),
     ...(params.includeUnknownListenersAsStale === undefined
       ? {}
       : { includeUnknownListenersAsStale: params.includeUnknownListenersAsStale }),
@@ -269,6 +271,34 @@ describe("inspectGatewayRestart", () => {
 
     expect(snapshot.healthy).toBe(true);
     expect((firstCallArg(probeGateway) as { url?: string }).url).toBe("ws://127.0.0.1:18789");
+  });
+
+  it("forwards resolved probe auth into the reachability probe", async () => {
+    classifyPortListener.mockReturnValue("unknown");
+    probeGateway.mockResolvedValue({
+      ok: true,
+      close: null,
+    });
+
+    await inspectGatewayRestartWithSnapshot({
+      runtime: { status: "running", pid: 8000 },
+      probeAuth: { token: "daemon-token" }, // pragma: allowlist secret
+      portUsage: {
+        port: 18789,
+        status: "busy",
+        listeners: [{ commandLine: "" }],
+        hints: [],
+      },
+    });
+
+    expect(probeGateway).toHaveBeenCalledWith(
+      expect.objectContaining({
+        auth: {
+          token: "daemon-token", // pragma: allowlist secret
+          password: undefined,
+        },
+      }),
+    );
   });
 
   it("treats a busy port as healthy when runtime status lags but the probe succeeds", async () => {
