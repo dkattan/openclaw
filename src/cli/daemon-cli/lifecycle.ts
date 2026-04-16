@@ -11,7 +11,6 @@ import {
 import type { SafeGatewayRestartRequestResult } from "../../infra/restart-coordinator.js";
 import { type GatewayRestartIntent, writeGatewayRestartIntentSync } from "../../infra/restart.js";
 import { defaultRuntime } from "../../runtime.js";
-import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import { theme } from "../../terminal/theme.js";
 import { formatCliCommand } from "../command-format.js";
 import { parseDurationMs } from "../parse-duration.js";
@@ -25,6 +24,7 @@ import {
 import {
   DEFAULT_RESTART_HEALTH_ATTEMPTS,
   DEFAULT_RESTART_HEALTH_DELAY_MS,
+  resolveRestartHealthProbeAuth,
   type GatewayRestartSnapshot,
   renderGatewayPortHealthDiagnostics,
   renderRestartDiagnostics,
@@ -66,15 +66,20 @@ function formatRestartFailure(params: {
 }
 
 async function resolveGatewayLifecyclePort(service = resolveGatewayService()) {
+  const mergedEnv = await resolveGatewayLifecycleEnv(service);
   const command = await service.readCommand(process.env).catch(() => null);
-  const serviceEnv = command?.environment ?? undefined;
-  const mergedEnv = {
-    ...(process.env as Record<string, string | undefined>),
-    ...(serviceEnv ?? undefined),
-  } as NodeJS.ProcessEnv;
 
   const portFromArgs = parsePortFromArgs(command?.programArguments);
   return portFromArgs ?? resolveGatewayPort(await readBestEffortConfig(), mergedEnv);
+}
+
+async function resolveGatewayLifecycleEnv(service = resolveGatewayService()): Promise<NodeJS.ProcessEnv> {
+  const command = await service.readCommand(process.env).catch(() => null);
+  const serviceEnv = command?.environment ?? undefined;
+  return {
+    ...(process.env as Record<string, string | undefined>),
+    ...(serviceEnv ?? undefined),
+  } as NodeJS.ProcessEnv;
 }
 
 function resolveGatewayPortFallback(): Promise<number> {
@@ -83,16 +88,19 @@ function resolveGatewayPortFallback(): Promise<number> {
     .catch(() => resolveGatewayPort(undefined, process.env));
 }
 
-async function assertUnmanagedGatewayRestartEnabled(port: number): Promise<void> {
+async function assertUnmanagedGatewayRestartEnabled(
+  port: number,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
   const cfg = await readBestEffortConfig().catch(() => undefined);
   const tlsEnabled = !!cfg?.gateway?.tls?.enabled;
   const scheme = tlsEnabled ? "wss" : "ws";
+  const probeAuth = await resolveRestartHealthProbeAuth({ env, cfg, mode: "local" }).catch(
+    () => undefined,
+  );
   const probe = await probeGateway({
     url: `${scheme}://127.0.0.1:${port}`,
-    auth: {
-      token: normalizeOptionalString(process.env.OPENCLAW_GATEWAY_TOKEN),
-      password: normalizeOptionalString(process.env.OPENCLAW_GATEWAY_PASSWORD),
-    },
+    auth: probeAuth?.token || probeAuth?.password ? probeAuth : undefined,
     timeoutMs: 1_000,
   }).catch(() => null);
 
@@ -196,7 +204,7 @@ async function restartGatewayWithoutServiceManager(
   port: number,
   restartIntent?: GatewayRestartIntent,
 ) {
-  await assertUnmanagedGatewayRestartEnabled(port);
+  await assertUnmanagedGatewayRestartEnabled(port, await resolveGatewayLifecycleEnv());
   const pids = resolveVerifiedGatewayListenerPids(port);
   if (pids.length === 0) {
     return null;
@@ -314,11 +322,21 @@ export async function runDaemonRestart(opts: DaemonLifecycleOptions = {}): Promi
       return null;
     },
     postRestartCheck: async ({ warnings, fail, stdout }) => {
+      const restartEnv = await resolveGatewayLifecycleEnv(service).catch(
+        () => process.env as NodeJS.ProcessEnv,
+      );
+      const restartProbeAuth = await resolveRestartHealthProbeAuth({
+        env: restartEnv,
+        mode: "local",
+      }).catch(() => undefined);
+
       if (restartedWithoutServiceManager) {
         const health = await waitForGatewayHealthyListener({
           port: restartPort,
           attempts: restartHealthAttempts,
           delayMs: POST_RESTART_HEALTH_DELAY_MS,
+          env: restartEnv,
+          probeAuth: restartProbeAuth,
         });
         if (health.healthy) {
           return undefined;
@@ -348,6 +366,8 @@ export async function runDaemonRestart(opts: DaemonLifecycleOptions = {}): Promi
         port: restartPort,
         attempts: restartHealthAttempts,
         delayMs: POST_RESTART_HEALTH_DELAY_MS,
+        env: restartEnv,
+        probeAuth: restartProbeAuth,
         includeUnknownListenersAsStale: process.platform === "win32",
       });
 
@@ -369,6 +389,8 @@ export async function runDaemonRestart(opts: DaemonLifecycleOptions = {}): Promi
           port: restartPort,
           attempts: restartHealthAttempts,
           delayMs: POST_RESTART_HEALTH_DELAY_MS,
+          env: restartEnv,
+          probeAuth: restartProbeAuth,
           includeUnknownListenersAsStale: process.platform === "win32",
         });
       }
