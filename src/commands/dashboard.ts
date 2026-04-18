@@ -106,6 +106,8 @@ export async function dashboardCommand(
       hint = formatControlUiSshHint({
         port,
         basePath,
+        tlsEnabled,
+        token: includeTokenInUrl ? token || undefined : undefined,
       });
     }
   } else {
