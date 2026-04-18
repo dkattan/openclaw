@@ -457,11 +457,11 @@ export type GatewayConfig = {
    * - lan: 0.0.0.0 (all interfaces, no fallback)
    * - loopback: 127.0.0.1 (local-only)
    * - tailnet: Tailnet IPv4 if available (100.64.0.0/10), else loopback
-   * - custom: User-specified IP, fallback to 0.0.0.0 if unavailable (requires customBindHost)
+    * - custom: User-specified host/IP, fallback to 0.0.0.0 if unavailable (requires customBindHost)
    * Default: loopback (127.0.0.1).
    */
   bind?: GatewayBindMode;
-  /** Custom IP address for bind="custom" mode. Fallback: 0.0.0.0. */
+  /** Custom host/IP for bind="custom" mode. Fallback: 0.0.0.0. */
   customBindHost?: string;
   controlUi?: GatewayControlUiConfig;
   auth?: GatewayAuthConfig;

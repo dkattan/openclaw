@@ -186,7 +186,7 @@ describe("resolveGatewayRuntimeConfig", () => {
             auth: TOKEN_AUTH,
           },
         },
-        expectedMessage: "gateway.bind=custom requires a valid IPv4 customBindHost",
+        expectedMessage: "gateway.bind=custom requires a valid hostname or IPv4 customBindHost",
       },
       {
         name: "custom bind with mismatched resolved host",
@@ -204,6 +204,22 @@ describe("resolveGatewayRuntimeConfig", () => {
       await expect(resolveGatewayRuntimeConfig({ cfg, port: 18789, host })).rejects.toThrow(
         expectedMessage,
       );
+    });
+
+    it("allows custom bind with hostname", async () => {
+      const result = await resolveGatewayRuntimeConfig({
+        cfg: {
+          gateway: {
+            bind: "custom" as const,
+            customBindHost: "clawtan.kattan.local",
+            auth: TOKEN_AUTH,
+            controlUi: { allowedOrigins: ["https://clawtan.kattan.local"] },
+          },
+        },
+        port: 18789,
+        host: "clawtan.kattan.local",
+      });
+      expect(result.bindHost).toBe("clawtan.kattan.local");
     });
 
     it.each([

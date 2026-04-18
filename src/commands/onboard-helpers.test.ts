@@ -281,6 +281,17 @@ describe("resolveControlUiLinks", () => {
     expect(links.wsUrl).toBe("wss://192.168.1.100:18789");
   });
 
+  it("uses custom hostnames and TLS for custom bind", () => {
+    const links = resolveControlUiLinks({
+      port: 443,
+      bind: "custom",
+      customBindHost: "clawtan.kattan.local",
+      tlsEnabled: true,
+    });
+    expect(links.httpUrl).toBe("https://clawtan.kattan.local:443/");
+    expect(links.wsUrl).toBe("wss://clawtan.kattan.local:443");
+  });
+
   it("falls back to loopback for invalid customBindHost", () => {
     const links = resolveControlUiLinks({
       port: 18789,

@@ -3,7 +3,7 @@ import {
   pickBestEffortPrimaryLanIPv4,
 } from "../infra/network-discovery-display.js";
 import { normalizeControlUiBasePath } from "./control-ui-shared.js";
-import { isValidIPv4 } from "./net.js";
+import { isValidHostname } from "./net.js";
 
 export function resolveControlUiLinks(params: {
   port: number;
@@ -17,7 +17,7 @@ export function resolveControlUiLinks(params: {
   const customBindHost = params.customBindHost?.trim();
   const { tailnetIPv4 } = inspectBestEffortPrimaryTailnetIPv4();
   const host = (() => {
-    if (bind === "custom" && customBindHost && isValidIPv4(customBindHost)) {
+    if (bind === "custom" && customBindHost && isValidHostname(customBindHost)) {
       return customBindHost;
     }
     if (bind === "tailnet" && tailnetIPv4) {

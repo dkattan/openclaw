@@ -185,10 +185,12 @@ export function formatControlUiSshHint(params: {
   port: number;
   basePath?: string;
   token?: string;
+  tlsEnabled?: boolean;
 }): string {
   const basePath = normalizeControlUiBasePath(params.basePath);
   const uiPath = basePath ? `${basePath}/` : "/";
-  const localUrl = `http://localhost:${params.port}${uiPath}`;
+  const scheme = params.tlsEnabled ? "https" : "http";
+  const localUrl = `${scheme}://localhost:${params.port}${uiPath}`;
   const authedUrl = params.token
     ? `${localUrl}#token=${encodeURIComponent(params.token)}`
     : undefined;

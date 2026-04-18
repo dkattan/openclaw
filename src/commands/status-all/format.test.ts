@@ -115,6 +115,17 @@ describe("status-all format", () => {
       resolveStatusDashboardUrl({
         cfg: {
           gateway: {
+            bind: "custom",
+            customBindHost: "clawtan.kattan.local",
+            tls: { enabled: true },
+          },
+        },
+      }),
+    ).toBe("https://clawtan.kattan.local:18789/");
+    expect(
+      resolveStatusDashboardUrl({
+        cfg: {
+          gateway: {
             controlUi: { enabled: false },
           },
         },
