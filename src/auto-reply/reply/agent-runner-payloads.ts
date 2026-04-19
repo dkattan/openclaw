@@ -23,6 +23,10 @@ import {
   resolveOriginMessageTo,
 } from "./origin-routing.js";
 import { normalizeReplyPayloadDirectives } from "./reply-delivery.js";
+import {
+  buildReplyMediaNormalizationFailurePayload,
+  ReplyMediaNormalizationError,
+} from "./reply-media-paths.js";
 import { applyReplyThreading, isRenderablePayload } from "./reply-payloads-base.js";
 
 const replyPayloadsDedupeRuntimeLoader = createLazyImportLoader(
@@ -47,6 +51,12 @@ async function normalizeReplyPayloadMedia(params: {
     return copyReplyPayloadMetadata(params.payload, normalized);
   } catch (err) {
     logVerbose(`reply payload media normalization failed: ${String(err)}`);
+    if (err instanceof ReplyMediaNormalizationError) {
+      return copyReplyPayloadMetadata(
+        params.payload,
+        buildReplyMediaNormalizationFailurePayload(params.payload, err),
+      );
+    }
     return copyReplyPayloadMetadata(params.payload, {
       ...params.payload,
       text: params.suppressMediaFailureWarning
