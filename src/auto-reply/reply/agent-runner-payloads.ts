@@ -290,7 +290,7 @@ export async function buildReplyPayloads(params: {
       originatingAccountId: params.accountId,
     }),
   }) ?? {
-    shouldDedupePayloads: shouldCheckMessagingToolDedupe && messagingToolSentTargets.length === 0,
+    shouldDedupePayloads: false,
     matchingRoute: false,
     routeSentTexts: [],
     routeSentMediaUrls: [],
