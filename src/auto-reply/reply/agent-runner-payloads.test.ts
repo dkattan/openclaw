@@ -131,7 +131,12 @@ describe("buildReplyPayloads media filter integration", () => {
       messagingToolSentTargets: [{ tool: "telegram", provider: "telegram", to: "telegram:123" }],
     });
 
-    expect(replyPayloads).toHaveLength(0);
+    expect(replyPayloads).toHaveLength(1);
+    expect(replyPayloads[0]).toMatchObject({
+      text: "hello",
+      mediaUrl: undefined,
+      mediaUrls: undefined,
+    });
   });
 
   it("preserves MEDIA directive when sent media lacks same-target proof", async () => {
@@ -182,7 +187,12 @@ describe("buildReplyPayloads media filter integration", () => {
       normalizeMediaPaths,
     });
 
-    expect(replyPayloads).toHaveLength(0);
+    expect(replyPayloads).toHaveLength(1);
+    expect(replyPayloads[0]).toMatchObject({
+      text: "hello",
+      mediaUrl: undefined,
+      mediaUrls: undefined,
+    });
   });
 
   it("converts reply media normalization failures into visible error payloads", async () => {

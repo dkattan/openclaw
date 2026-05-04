@@ -297,7 +297,8 @@ export async function buildReplyPayloads(params: {
     useGlobalSentTextEvidenceFallback: false,
     useGlobalSentMediaUrlEvidenceFallback: false,
   };
-  const dedupeMessagingToolPayloads = messagingToolPayloadDedupe.shouldDedupePayloads;
+  const dedupeMessagingToolTextPayloads = messagingToolPayloadDedupe.shouldDedupePayloads;
+  const dedupeMessagingToolMediaPayloads = messagingToolPayloadDedupe.matchingRoute;
   const sentMediaUrlFallback = params.messagingToolSentMediaUrls ?? [];
   const shouldUseGlobalSentMediaUrlEvidence =
     messagingToolPayloadDedupe.matchingRoute &&
@@ -317,13 +318,13 @@ export async function buildReplyPayloads(params: {
       ? messagingToolSentTexts
       : messagingToolPayloadDedupe.routeSentTexts
     : messagingToolSentTexts;
-  const messagingToolSentMediaUrls = dedupeMessagingToolPayloads
+  const messagingToolSentMediaUrls = dedupeMessagingToolMediaPayloads
     ? await normalizeSentMediaUrlsForDedupe({
         sentMediaUrls: sentMediaUrlsForDedupe,
         normalizeMediaPaths: params.normalizeMediaPaths,
       })
     : sentMediaUrlsForDedupe;
-  const mediaFilteredPayloads = dedupeMessagingToolPayloads
+  const mediaFilteredPayloads = dedupeMessagingToolMediaPayloads
     ? (
         dedupeRuntime ?? (await loadReplyPayloadsDedupeRuntime())
       ).filterMessagingToolMediaDuplicates({
@@ -331,7 +332,7 @@ export async function buildReplyPayloads(params: {
         sentMediaUrls: messagingToolSentMediaUrls,
       })
     : silentFilteredPayloads;
-  const dedupedPayloads = dedupeMessagingToolPayloads
+  const dedupedPayloads = dedupeMessagingToolTextPayloads
     ? (dedupeRuntime ?? (await loadReplyPayloadsDedupeRuntime())).filterMessagingToolDuplicates({
         payloads: mediaFilteredPayloads,
         sentTexts: sentTextsForDedupe,
