@@ -667,7 +667,7 @@ export function handleMessageEnd(
   const suppressDeterministicApprovalOutput = shouldSuppressDeterministicApprovalOutput(ctx.state);
   const onBlockReply = ctx.params.onBlockReply;
   promoteThinkingTagsToBlocks(assistantMessage);
-  const assistantText = coerceText(extractAssistantText(assistantMessage));
+  const assistantText = coerceChatContentText(extractAssistantText(assistantMessage));
   const rawThinkingCandidate =
     extractAssistantThinking(assistantMessage) || extractThinkingFromTaggedText(assistantText);
   const deliverCommentaryBlockReplies =
