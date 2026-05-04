@@ -1090,6 +1090,18 @@ export async function dispatchReplyFromConfig(
       }
       return parts.join("\n\n").trim() || "Planning next steps.";
     };
+    const summarizeReasoningLabel = (text?: string) => {
+      const normalized = normalizeOptionalString(text)
+        ?.replace(/^Reasoning:\s*/i, "")
+        .replace(/[_*`]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!normalized) {
+        return "";
+      }
+      const firstSentence = normalized.split(/(?<=[.!?])\s+/u, 1)[0] ?? normalized;
+      return normalizeWorkingLabel(firstSentence);
+    };
     const progressReporter = createProgressSummaryReporter({
       shouldSend: () => !suppressDelivery && shouldSendToolStartStatuses,
       send: async (text) => {
