@@ -408,7 +408,11 @@ export function handleMessageUpdate(
 
   ctx.noteLastAssistant(msg);
   const suppressVisibleAssistantOutput = shouldSuppressAssistantVisibleOutput(msg);
-  if (suppressVisibleAssistantOutput) {
+  if (
+    suppressVisibleAssistantOutput &&
+    !deliverCommentaryBlockReplies &&
+    !deliverThinkingBlockReplies
+  ) {
     return;
   }
   const suppressDeterministicApprovalOutput = shouldSuppressDeterministicApprovalOutput(ctx.state);
