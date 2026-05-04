@@ -1672,6 +1672,93 @@ describe("dispatchReplyFromConfig", () => {
     expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({ text: "done" });
   });
 
+  it("sends a paced progress summary after silence in direct chats", async () => {
+    vi.useFakeTimers();
+    try {
+      setNoAbort();
+      const cfg = emptyConfig;
+      const dispatcher = createDispatcher();
+      const ctx = buildTestCtx({
+        Provider: "telegram",
+        ChatType: "direct",
+      });
+
+      const replyResolver = (_ctx: MsgContext, opts?: GetReplyOptions, _cfg?: OpenClawConfig) => {
+        void opts?.onReasoningStream?.({
+          text: "Inspecting payload dependencies to decide the safest fix.",
+        });
+        return new Promise<ReplyPayload>((resolve) => {
+          setTimeout(() => resolve({ text: "done" } satisfies ReplyPayload), 11_000);
+        });
+      };
+
+      const dispatchPromise = dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
+
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(dispatcher.sendToolResult).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(dispatcher.sendToolResult).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          text: "Working: Inspecting payload dependencies to decide the safest fix.",
+        }),
+      );
+
+      await vi.advanceTimersByTimeAsync(1_001);
+      await dispatchPromise;
+
+      expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({ text: "done" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shortens the final reply when earlier progress already covered the opening text", async () => {
+    vi.useFakeTimers();
+    try {
+      setNoAbort();
+      const cfg = emptyConfig;
+      const dispatcher = createDispatcher();
+      const ctx = buildTestCtx({
+        Provider: "telegram",
+        ChatType: "direct",
+      });
+
+      const replyResolver = (_ctx: MsgContext, opts?: GetReplyOptions, _cfg?: OpenClawConfig) => {
+        void opts?.onReasoningStream?.({
+          text: "Inspecting payload dependencies to decide the safest fix.",
+        });
+        return new Promise<ReplyPayload>((resolve) => {
+          setTimeout(
+            () =>
+              resolve({
+                text:
+                  "Inspecting payload dependencies to decide the safest fix. The actual change is a tiny import cleanup.",
+              } satisfies ReplyPayload),
+            11_000,
+          );
+        });
+      };
+
+      const dispatchPromise = dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
+      await vi.advanceTimersByTimeAsync(11_000);
+      await dispatchPromise;
+
+      expect(dispatcher.sendToolResult).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          text: "Working: Inspecting payload dependencies to decide the safest fix.",
+        }),
+      );
+      expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({
+        text: "The actual change is a tiny import cleanup.",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("suppresses plan and working-status progress when session verbose is off", async () => {
     setNoAbort();
     sessionStoreMocks.currentEntry = {

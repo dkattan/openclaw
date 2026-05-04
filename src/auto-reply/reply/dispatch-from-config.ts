@@ -934,6 +934,16 @@ export async function dispatchReplyFromConfig(
       !isSlackNonDirectSurface && (ctx.ChatType !== "group" || ctx.IsForum === true);
     const shouldSendToolSummaries = shouldSendVerboseProgressMessages;
     const shouldSendToolStartStatuses = shouldSendVerboseProgressMessages;
+    const sentProgressTexts: string[] = [];
+    const rememberSentProgressText = (text?: string) => {
+      const normalized = normalizeOptionalString(text)?.trim();
+      if (!normalized) {
+        return;
+      }
+      if (!sentProgressTexts.includes(normalized)) {
+        sentProgressTexts.push(normalized);
+      }
+    };
     const sendFinalPayload = async (
       payload: ReplyPayload,
     ): Promise<{ queuedFinal: boolean; routedFinalCount: number }> => {
@@ -941,7 +951,7 @@ export async function dispatchReplyFromConfig(
         markInboundDedupeReplayUnsafe();
       }
       const ttsPayload = await maybeApplyTtsToReplyPayload({
-        payload,
+        payload: dedupedPayload,
         cfg,
         channel: deliveryChannel,
         kind: "final",
@@ -1077,11 +1087,81 @@ export async function dispatchReplyFromConfig(
       }
       return parts.join("\n\n").trim() || "Planning next steps.";
     };
+    const summarizePlanUpdateLabel = (payload: { explanation?: string; steps?: string[] }) =>
+      normalizeWorkingLabel(payload.explanation ?? payload.steps?.[0] ?? "planning next steps");
+    const summarizeToolStartLabel = (payload: { name?: string; phase?: string }) => {
+      const name = normalizeOptionalString(payload.name);
+      if (!name) {
+        return "";
+      }
+      const phase = normalizeOptionalLowercaseString(payload.phase) ?? "";
+      return normalizeWorkingLabel(phase === "update" ? `running ${name}` : `starting ${name}`);
+    };
+    const summarizeItemEventLabel = (payload: {
+      progressText?: string;
+      summary?: string;
+      title?: string;
+      name?: string;
+      kind?: string;
+      phase?: string;
+      status?: string;
+    }) => {
+      const progressText = normalizeOptionalString(payload.progressText);
+      if (progressText) {
+        return normalizeWorkingLabel(progressText);
+      }
+      const summary = normalizeOptionalString(payload.summary);
+      if (summary) {
+        return normalizeWorkingLabel(summary);
+      }
+      const subject =
+        normalizeOptionalString(payload.title) ??
+        normalizeOptionalString(payload.name) ??
+        normalizeOptionalString(payload.kind);
+      if (!subject) {
+        return "";
+      }
+      const phase = normalizeOptionalLowercaseString(payload.phase) ?? "";
+      const status = normalizeOptionalLowercaseString(payload.status) ?? "";
+      if (phase === "end" || status === "completed" || status === "done") {
+        return normalizeWorkingLabel(`finished ${subject}`);
+      }
+      if (phase === "start" || status === "running" || status === "pending") {
+        return normalizeWorkingLabel(`working on ${subject}`);
+      }
+      return normalizeWorkingLabel(subject);
+    };
+    const summarizeReasoningLabel = (text?: string) => {
+      const normalized = normalizeOptionalString(text)
+        ?.replace(/^Reasoning:\s*/i, "")
+        .replace(/[_*`]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!normalized) {
+        return "";
+      }
+      const firstSentence = normalized.split(/(?<=[.!?])\s+/u, 1)[0] ?? normalized;
+      return normalizeWorkingLabel(firstSentence);
+    };
+    const progressReporter = createProgressSummaryReporter({
+      shouldSend: () => !suppressDelivery && shouldSendToolStartStatuses,
+      send: async (text) => {
+        const payload: ReplyPayload = { text };
+        if (shouldRouteToOriginating) {
+          await sendPayloadAsync(payload, undefined, false);
+          rememberSentProgressText(text);
+          return;
+        }
+        dispatcher.sendToolResult(payload);
+        rememberSentProgressText(text);
+      },
+    });
     const maybeSendWorkingStatus = async (label: string): Promise<void> => {
       if (suppressDelivery) {
         return;
       }
       const normalizedLabel = normalizeWorkingLabel(label);
+      progressReporter.noteProgress(normalizedLabel);
       if (
         !shouldEmitVerboseProgress() ||
         !shouldSendToolStartStatuses ||
@@ -1098,10 +1178,14 @@ export async function dispatchReplyFromConfig(
       };
       if (shouldRouteToOriginating) {
         await sendPayloadAsync(payload, undefined, false);
+        rememberSentProgressText(payload.text);
+        progressReporter.noteVisibleDelivery();
         return;
       }
       markInboundDedupeReplayUnsafe();
       dispatcher.sendToolResult(payload);
+      rememberSentProgressText(payload.text);
+      progressReporter.noteVisibleDelivery();
     };
     const sendPlanUpdate = async (payload: {
       explanation?: string;
@@ -1115,10 +1199,14 @@ export async function dispatchReplyFromConfig(
       };
       if (shouldRouteToOriginating) {
         await sendPayloadAsync(replyPayload, undefined, false);
+        rememberSentProgressText(replyPayload.text);
+        progressReporter.noteVisibleDelivery();
         return;
       }
       markInboundDedupeReplayUnsafe();
       dispatcher.sendToolResult(replyPayload);
+      rememberSentProgressText(replyPayload.text);
+      progressReporter.noteVisibleDelivery();
     };
     const summarizeApprovalLabel = (payload: {
       status?: string;

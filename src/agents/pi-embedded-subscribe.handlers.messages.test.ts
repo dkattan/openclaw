@@ -92,6 +92,10 @@ function createMessageEndContext(
       session: { id: "session-1" },
       ...(params.onAgentEvent ? { onAgentEvent: params.onAgentEvent } : {}),
       ...(params.onBlockReply ? { onBlockReply: params.onBlockReply } : { onBlockReply: vi.fn() }),
+      ...(params.deliverCommentaryBlockReplies
+        ? { deliverCommentaryBlockReplies: true }
+        : {}),
+      ...(params.deliverThinkingBlockReplies ? { deliverThinkingBlockReplies: true } : {}),
     },
     state: {
       assistantTexts: [],
@@ -163,6 +167,24 @@ describe("resolveSilentReplyFallbackText", () => {
         messagingToolSentTexts: [],
       }),
     ).toBe("NO_REPLY");
+  });
+
+  it("replaces ANNOUNCE_SKIP with latest messaging tool text when available", () => {
+    expect(
+      resolveSilentReplyFallbackText({
+        text: "ANNOUNCE_SKIP",
+        messagingToolSentTexts: ["first", "final delivered text"],
+      }),
+    ).toBe("final delivered text");
+  });
+
+  it("keeps ANNOUNCE_SKIP when there is no messaging tool text to mirror", () => {
+    expect(
+      resolveSilentReplyFallbackText({
+        text: "ANNOUNCE_SKIP",
+        messagingToolSentTexts: [],
+      }),
+    ).toBe("ANNOUNCE_SKIP");
   });
 
   it("tolerates malformed text payloads without throwing", () => {
@@ -716,6 +738,82 @@ describe("handleMessageEnd", () => {
     expect(onAgentEvent).not.toHaveBeenCalled();
     expect(emitBlockReply).not.toHaveBeenCalled();
     expect(finalizeAssistantTexts).not.toHaveBeenCalled();
+  });
+
+  it("emits commentary message_end block replies when enabled", () => {
+    const onAgentEvent = vi.fn();
+    const emitBlockReply = vi.fn();
+    const finalizeAssistantTexts = vi.fn();
+    const ctx = createMessageEndContext({
+      onAgentEvent,
+      finalizeAssistantTexts,
+      emitBlockReply,
+      deliverCommentaryBlockReplies: true,
+    });
+
+    void handleMessageEnd(ctx, {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [
+          createOpenAiResponsesTextBlock({
+            text: "Need send.",
+            id: "msg_sig",
+            phase: "commentary",
+          }),
+          { type: "tool_call", name: "read", arguments: "{}" },
+        ],
+        usage: { input: 1, output: 1, total: 2 },
+      },
+    } as never);
+
+    expect(onAgentEvent).not.toHaveBeenCalled();
+    expect(finalizeAssistantTexts).not.toHaveBeenCalled();
+    expect(emitBlockReply).toHaveBeenCalledTimes(1);
+    expect(emitBlockReply).toHaveBeenCalledWith(expect.objectContaining({ text: "Need send." }));
+    expect(ctx.state.deltaBuffer).toBe("");
+    expect(ctx.state.blockBuffer).toBe("");
+  });
+
+  it("emits reasoning block replies for suppressed commentary when thinking delivery is enabled", () => {
+    const onAgentEvent = vi.fn();
+    const emitBlockReply = vi.fn();
+    const finalizeAssistantTexts = vi.fn();
+    const ctx = createMessageEndContext({
+      onAgentEvent,
+      finalizeAssistantTexts,
+      emitBlockReply,
+      deliverThinkingBlockReplies: true,
+      state: {
+        includeReasoning: true,
+      },
+    });
+
+    void handleMessageEnd(ctx, {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "Inspecting payload dependencies." },
+          createOpenAiResponsesTextBlock({
+            text: "Working...",
+            id: "item_commentary",
+            phase: "commentary",
+          }),
+        ],
+        usage: { input: 1, output: 1, total: 2 },
+      },
+    } as never);
+
+    expect(onAgentEvent).not.toHaveBeenCalled();
+    expect(finalizeAssistantTexts).toHaveBeenCalled();
+    expect(emitBlockReply).toHaveBeenCalledTimes(1);
+    expect(emitBlockReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Reasoning:\n_Inspecting payload dependencies._",
+        isReasoning: true,
+      }),
+    );
   });
 
   it("does not duplicate block reply for text_end channels when text was already delivered", () => {

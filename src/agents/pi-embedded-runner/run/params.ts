@@ -163,6 +163,16 @@ export type RunEmbeddedPiAgentParams = {
    * final reply assembly instead of sending them live.
    */
   bufferTextOnlyBlockReplies?: boolean;
+  /**
+   * True when commentary-phase assistant messages should still emit message_end
+   * block replies for downstream delivery channels.
+   */
+  deliverCommentaryBlockReplies?: boolean;
+  /**
+   * True when thinking/reasoning blocks should still emit block replies even if
+   * the surrounding assistant message is otherwise suppressed.
+   */
+  deliverThinkingBlockReplies?: boolean;
   onBlockReplyFlush?: () => void | Promise<void>;
   blockReplyBreak?: "text_end" | "message_end";
   blockReplyChunking?: BlockReplyChunking;

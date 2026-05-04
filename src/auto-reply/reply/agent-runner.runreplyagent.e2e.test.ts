@@ -101,6 +101,7 @@ beforeEach(() => {
 
 function createMinimalRun(params?: {
   opts?: GetReplyOptions;
+  commandBody?: string;
   resolvedVerboseLevel?: "off" | "on";
   sessionStore?: Record<string, SessionEntry>;
   sessionEntry?: SessionEntry;
@@ -159,7 +160,7 @@ function createMinimalRun(params?: {
     run: async () => {
       const runReplyAgent = await getRunReplyAgent();
       return runReplyAgent({
-        commandBody: "hello",
+        commandBody: params?.commandBody ?? "hello",
         followupRun,
         queueKey: "main",
         resolvedQueue,
@@ -532,6 +533,51 @@ describe("runReplyAgent typing (heartbeat)", () => {
       | { bufferTextOnlyBlockReplies?: unknown }
       | undefined;
     expect(call?.bufferTextOnlyBlockReplies).toBe(true);
+  });
+
+  it("flags commentary block replies when block reply delivery is enabled", async () => {
+    const onBlockReply = vi.fn();
+    state.runEmbeddedPiAgentMock.mockResolvedValueOnce({
+      payloads: [{ text: "final" }],
+      meta: {},
+    });
+
+    const { run } = createMinimalRun({
+      opts: { onBlockReply },
+      blockStreamingEnabled: true,
+    });
+    await run();
+
+    const call = state.runEmbeddedPiAgentMock.mock.calls[0]?.[0] as
+      | { deliverCommentaryBlockReplies?: unknown }
+      | undefined;
+    expect(call?.deliverCommentaryBlockReplies).toBe(true);
+  });
+
+  it("strips /showthinking from the prompt and enables thinking block replies for that run", async () => {
+    const onBlockReply = vi.fn();
+    state.runEmbeddedPiAgentMock.mockResolvedValueOnce({
+      payloads: [{ text: "final" }],
+      meta: {},
+    });
+
+    const { run } = createMinimalRun({
+      commandBody: "tell me more /showthinking about payloads.ts",
+      opts: { onBlockReply },
+      blockStreamingEnabled: true,
+    });
+    await run();
+
+    const call = state.runEmbeddedPiAgentMock.mock.calls[0]?.[0] as
+      | {
+          prompt?: unknown;
+          reasoningLevel?: unknown;
+          deliverThinkingBlockReplies?: unknown;
+        }
+      | undefined;
+    expect(call?.prompt).toBe("tell me more about payloads.ts");
+    expect(call?.reasoningLevel).toBe("on");
+    expect(call?.deliverThinkingBlockReplies).toBe(true);
   });
 
   it("handles typing for normal and silent tool results", async () => {

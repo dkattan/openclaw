@@ -40,6 +40,18 @@ export type SubscribeEmbeddedPiSessionParams = {
    * final visible assistant text so they do not fan out as end-of-turn replies.
    */
   bufferTextOnlyBlockReplies?: boolean;
+  /**
+   * When true, commentary-phase assistant messages may emit message_end block
+   * replies for downstream channels while remaining suppressed from assistant
+   * event streams and final assistant-text accumulation.
+   */
+  deliverCommentaryBlockReplies?: boolean;
+  /**
+   * When true, thinking/reasoning blocks may still emit block replies for
+   * downstream channels even if the surrounding assistant message is otherwise
+   * suppressed from user-visible assistant output.
+   */
+  deliverThinkingBlockReplies?: boolean;
   /** Flush pending block replies (e.g., before tool execution to preserve message boundaries). */
   onBlockReplyFlush?: () => void | Promise<void>;
   blockReplyBreak?: "text_end" | "message_end";

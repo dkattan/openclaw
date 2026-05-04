@@ -2353,6 +2353,8 @@ export async function runEmbeddedAttempt(
           onReasoningEnd: params.onReasoningEnd,
           onBlockReply: params.onBlockReply,
           bufferTextOnlyBlockReplies: params.bufferTextOnlyBlockReplies,
+          deliverCommentaryBlockReplies: params.deliverCommentaryBlockReplies,
+          deliverThinkingBlockReplies: params.deliverThinkingBlockReplies,
           onBlockReplyFlush: params.onBlockReplyFlush,
           blockReplyBreak: params.blockReplyBreak,
           blockReplyChunking: params.blockReplyChunking,

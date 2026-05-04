@@ -197,6 +197,16 @@ export function extractReasoningDirective(body?: string): {
   };
 }
 
+export function extractShowThinkingDirective(body?: string): {
+  cleaned: string;
+  hasDirective: boolean;
+} {
+  if (!body) {
+    return { cleaned: "", hasDirective: false };
+  }
+  return extractSimpleDirective(body, ["showthinking"]);
+}
+
 export function extractStatusDirective(body?: string): {
   cleaned: string;
   hasDirective: boolean;
