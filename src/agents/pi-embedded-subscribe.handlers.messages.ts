@@ -408,11 +408,7 @@ export function handleMessageUpdate(
 
   ctx.noteLastAssistant(msg);
   const suppressVisibleAssistantOutput = shouldSuppressAssistantVisibleOutput(msg);
-  if (
-    suppressVisibleAssistantOutput &&
-    !deliverCommentaryBlockReplies &&
-    !deliverThinkingBlockReplies
-  ) {
+  if (suppressVisibleAssistantOutput) {
     return;
   }
   const suppressDeterministicApprovalOutput = shouldSuppressDeterministicApprovalOutput(ctx.state);
@@ -679,9 +675,7 @@ export function handleMessageEnd(
     assistantPhase === "commentary" &&
     ctx.params.deliverCommentaryBlockReplies === true;
   const deliverThinkingBlockReplies =
-    ctx.params.deliverThinkingBlockReplies === true &&
-    Boolean(onBlockReply) &&
-    Boolean(rawThinkingCandidate);
+    ctx.params.deliverThinkingBlockReplies === true && Boolean(onBlockReply);
   ctx.noteLastAssistant(assistantMessage);
   ctx.recordAssistantUsage((assistantMessage as { usage?: unknown }).usage);
   ctx.commitAssistantUsage();
@@ -702,8 +696,9 @@ export function handleMessageEnd(
   });
   warnIfAssistantEmittedToolText(ctx, assistantMessage);
 
+  const userFacingText = deliverCommentaryBlockReplies ? rawText : rawVisibleText;
   const text = resolveSilentReplyFallbackText({
-    text: ctx.stripBlockTags(rawVisibleText, { thinking: false, final: false }, { final: true }),
+    text: ctx.stripBlockTags(userFacingText, { thinking: false, final: false }, { final: true }),
     messagingToolSentTexts: ctx.state.messagingToolSentTexts,
   });
   const rawThinking =
