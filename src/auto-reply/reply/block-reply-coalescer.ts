@@ -50,7 +50,10 @@ export function createBlockReplyCoalescer(params: {
     }
     clearIdleTimer();
     idleTimer = setTimeout(() => {
-      void flush({ force: false });
+      // After the stream has gone idle we must flush even undersized trailing
+      // text, otherwise short commentary/tool-use updates can loop forever
+      // below minChars and only surface when a later force flush happens.
+      void flush({ force: true });
     }, idleMs);
   };
 
