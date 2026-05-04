@@ -93,6 +93,8 @@ import { resolveEffectiveReplyRoute } from "./effective-reply-route.js";
 import { withFullRuntimeReplyConfig } from "./get-reply-fast-path.js";
 import { claimInboundDedupe, commitInboundDedupe, releaseInboundDedupe } from "./inbound-dedupe.js";
 import { resolveOriginMessageProvider } from "./origin-routing.js";
+import { trimFinalReplyAgainstProgress } from "./progress-summary-final.js";
+import { createProgressSummaryReporter } from "./progress-summary-reporter.js";
 import { resolveReplyRoutingDecision } from "./routing-policy.js";
 import { resolveSourceReplyVisibilityPolicy } from "./source-reply-delivery-mode.js";
 import { resolveRunTypingPolicy } from "./typing-policy.js";
@@ -950,6 +952,7 @@ export async function dispatchReplyFromConfig(
       if (resolveSendableOutboundReplyParts(payload).hasContent) {
         markInboundDedupeReplayUnsafe();
       }
+      const dedupedPayload = trimFinalReplyAgainstProgress(payload, sentProgressTexts);
       const ttsPayload = await maybeApplyTtsToReplyPayload({
         payload: dedupedPayload,
         cfg,
