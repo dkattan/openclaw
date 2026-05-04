@@ -679,7 +679,11 @@ export function handleMessageEnd(
   ctx.noteLastAssistant(assistantMessage);
   ctx.recordAssistantUsage((assistantMessage as { usage?: unknown }).usage);
   ctx.commitAssistantUsage();
-  if (suppressVisibleAssistantOutput) {
+  if (
+    suppressVisibleAssistantOutput &&
+    !deliverCommentaryBlockReplies &&
+    !deliverThinkingBlockReplies
+  ) {
     return;
   }
   promoteThinkingTagsToBlocks(assistantMessage);
