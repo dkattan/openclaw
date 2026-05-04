@@ -1090,62 +1090,6 @@ export async function dispatchReplyFromConfig(
       }
       return parts.join("\n\n").trim() || "Planning next steps.";
     };
-    const summarizePlanUpdateLabel = (payload: { explanation?: string; steps?: string[] }) =>
-      normalizeWorkingLabel(payload.explanation ?? payload.steps?.[0] ?? "planning next steps");
-    const summarizeToolStartLabel = (payload: { name?: string; phase?: string }) => {
-      const name = normalizeOptionalString(payload.name);
-      if (!name) {
-        return "";
-      }
-      const phase = normalizeOptionalLowercaseString(payload.phase) ?? "";
-      return normalizeWorkingLabel(phase === "update" ? `running ${name}` : `starting ${name}`);
-    };
-    const summarizeItemEventLabel = (payload: {
-      progressText?: string;
-      summary?: string;
-      title?: string;
-      name?: string;
-      kind?: string;
-      phase?: string;
-      status?: string;
-    }) => {
-      const progressText = normalizeOptionalString(payload.progressText);
-      if (progressText) {
-        return normalizeWorkingLabel(progressText);
-      }
-      const summary = normalizeOptionalString(payload.summary);
-      if (summary) {
-        return normalizeWorkingLabel(summary);
-      }
-      const subject =
-        normalizeOptionalString(payload.title) ??
-        normalizeOptionalString(payload.name) ??
-        normalizeOptionalString(payload.kind);
-      if (!subject) {
-        return "";
-      }
-      const phase = normalizeOptionalLowercaseString(payload.phase) ?? "";
-      const status = normalizeOptionalLowercaseString(payload.status) ?? "";
-      if (phase === "end" || status === "completed" || status === "done") {
-        return normalizeWorkingLabel(`finished ${subject}`);
-      }
-      if (phase === "start" || status === "running" || status === "pending") {
-        return normalizeWorkingLabel(`working on ${subject}`);
-      }
-      return normalizeWorkingLabel(subject);
-    };
-    const summarizeReasoningLabel = (text?: string) => {
-      const normalized = normalizeOptionalString(text)
-        ?.replace(/^Reasoning:\s*/i, "")
-        .replace(/[_*`]+/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-      if (!normalized) {
-        return "";
-      }
-      const firstSentence = normalized.split(/(?<=[.!?])\s+/u, 1)[0] ?? normalized;
-      return normalizeWorkingLabel(firstSentence);
-    };
     const progressReporter = createProgressSummaryReporter({
       shouldSend: () => !suppressDelivery && shouldSendToolStartStatuses,
       send: async (text) => {
@@ -1331,7 +1275,17 @@ export async function dispatchReplyFromConfig(
         typingPolicy: typing.typingPolicy,
         suppressTyping: typing.suppressTyping,
         onPartialReply: wrapProgressCallback(params.replyOptions?.onPartialReply),
-        onReasoningStream: wrapProgressCallback(params.replyOptions?.onReasoningStream),
+        onReasoningStream: async (payload) => {
+          markProgress();
+          if (!suppressAutomaticSourceDelivery) {
+            await params.replyOptions?.onReasoningStream?.(payload);
+          }
+          const label = summarizeReasoningLabel(payload.text);
+          if (!label) {
+            return;
+          }
+          progressReporter.noteProgress(label);
+        },
         onReasoningEnd: wrapProgressCallback(params.replyOptions?.onReasoningEnd),
         onAssistantMessageStart: wrapProgressCallback(params.replyOptions?.onAssistantMessageStart),
         onBlockReplyQueued: wrapProgressCallback(params.replyOptions?.onBlockReplyQueued),
