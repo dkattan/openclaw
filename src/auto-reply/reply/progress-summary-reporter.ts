@@ -34,7 +34,8 @@ export function createProgressSummaryReporter(
   const shouldSend = params.shouldSend ?? (() => true);
   const now = params.now ?? (() => Date.now());
   const schedule = params.schedule ?? ((fn, delayMs) => setTimeout(fn, delayMs));
-  const cancel = params.cancel ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
+  const cancel =
+    params.cancel ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
   const initialDelayMs = params.initialDelayMs ?? DEFAULT_INITIAL_DELAY_MS;
   const repeatDelayMs = params.repeatDelayMs ?? DEFAULT_REPEAT_DELAY_MS;
 
@@ -42,7 +43,6 @@ export function createProgressSummaryReporter(
   let lastVisibleDeliveryAt: number | undefined;
   let latestProgressText = "";
   let lastSentProgressText = "";
-  let sentSyntheticProgress = false;
   let disposed = false;
   let timerHandle: unknown;
   let sendChain = Promise.resolve();
@@ -74,14 +74,13 @@ export function createProgressSummaryReporter(
         scheduleNext();
         return;
       }
-      const text = `${sentSyntheticProgress ? "Still working: " : "Working: "}${latestProgressText}`;
+      const text = latestProgressText;
       sendChain = sendChain
         .then(async () => {
           if (disposed || !shouldSend()) {
             return;
           }
           await params.send(text);
-          sentSyntheticProgress = true;
           lastSentProgressText = latestProgressText;
           lastVisibleDeliveryAt = now();
           scheduleNext();

@@ -294,6 +294,408 @@ const createShouldEmitVerboseProgress = (params: {
   };
 };
 
+const createResolveProgressMode = (params: {
+  sessionKey?: string;
+  storePath?: string;
+  fallbackMode: ProgressMode;
+}) => {
+  return (): ProgressMode => {
+    if (params.sessionKey && params.storePath) {
+      try {
+        const store = loadSessionStore(params.storePath);
+        const entry = resolveSessionStoreEntry({ store, sessionKey: params.sessionKey }).existing;
+        const currentMode = normalizeProgressMode(
+          typeof entry?.progressMode === "string" ? entry.progressMode : undefined,
+        );
+        if (currentMode) {
+          return currentMode;
+        }
+      } catch {
+        // Ignore transient store read failures and fall back to the current dispatch snapshot.
+      }
+    }
+    return params.fallbackMode;
+  };
+};
+
+function sanitizeProgressFreeformText(text?: string): string {
+  const normalized = normalizeOptionalString(text)
+    ?.replace(/^(\[Paced Progress\]:\s*)?(Working:|Still working:)\s*/i, "")
+    .replace(/[_*`]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) {
+    return "";
+  }
+  const summarizePathAction = (action: string, rawPath: string) => {
+    const cleanedPath = rawPath
+      .replace(/[)"'`,.;]+$/g, "")
+      .replace(/\\/g, "/")
+      .trim();
+    if (!cleanedPath) {
+      return "";
+    }
+    if (/playwriter|playwright/i.test(cleanedPath)) {
+      if (action === "Updating") {
+        return "Updating the Playwright test state";
+      }
+      return "Reviewing Playwright code";
+    }
+    const fileName = path.posix.basename(cleanedPath);
+    if (!fileName || fileName === "/" || fileName === ".") {
+      return "";
+    }
+    if (/^memory\/\d{4}-\d{2}-\d{2}\.md$/i.test(cleanedPath)) {
+      return `${action} memory note ${fileName}`;
+    }
+    return `${action} ${fileName}`;
+  };
+  const summarizeCommandText = (command: string) => {
+    const compact = command.replace(/\s+/g, " ").trim();
+    if (!compact) {
+      return "";
+    }
+    const tail = compact.split(/\s*(?:&&|;)\s*/u).at(-1) ?? compact;
+    if (/inline script|heredoc|python\d?\s+.*<<</i.test(compact)) {
+      return "Running an inline Python diagnostic";
+    }
+    if (/playwriter|playwright/i.test(compact)) {
+      return /privacy/i.test(compact)
+        ? "Running the Playwright privacy login check"
+        : "Running a Playwright diagnostic";
+    }
+    if (/(^|\s)(rg|grep)(\s|$)/i.test(compact)) {
+      return "Searching the codebase";
+    }
+    if (/(^|\s)sqlite3(\s|$)/i.test(compact)) {
+      return "Checking message history";
+    }
+    if (/(^|\s)(git)(\s+--no-pager)?\s+diff\b/i.test(compact)) {
+      return "Reviewing the code diff";
+    }
+    if (/(^|\s)(git)(\s+--no-pager)?\s+status\b/i.test(compact)) {
+      return "Checking changed files";
+    }
+    if (/\b(pnpm|npm|yarn)\b.*\btest\b/i.test(compact)) {
+      return "Running tests";
+    }
+    if (/\b(pnpm|npm|yarn)\b.*\bbuild\b/i.test(compact)) {
+      return "Building the project";
+    }
+    if (/^(tail|head|sed|cat)\b/i.test(tail)) {
+      const pathMatch = tail.match(/(~?\/\S+)/);
+      return pathMatch ? summarizePathAction("Reviewing", pathMatch[1]) : "Reviewing recent output";
+    }
+    if (/^find\b/i.test(tail)) {
+      return "Looking for relevant files";
+    }
+    return "";
+  };
+  let match = normalized.match(/^(?:finished )?read lines? \d+(?:-\d+)? from (.+)$/i);
+  if (match) {
+    return summarizePathAction("Reviewing", match[1]);
+  }
+  match = normalized.match(/^lines? \d+(?:-\d+)? from (.+)$/i);
+  if (match) {
+    return summarizePathAction("Reviewing", match[1]);
+  }
+  match = normalized.match(/^(?:finished )?edit(?: in)? (.+)$/i);
+  if (match) {
+    return summarizePathAction("Editing", match[1]);
+  }
+  match = normalized.match(/^(?:finished )?write(?: to)? (.+)$/i);
+  if (match) {
+    return summarizePathAction("Updating", match[1]);
+  }
+  match = normalized.match(/^(reviewing|editing|updating|checking) (.+)$/i);
+  if (match) {
+    const rawTarget = match[2];
+    if (/[\\/]/.test(rawTarget) || /~\//.test(rawTarget) || /\.[a-z0-9]{1,8}\b/i.test(rawTarget)) {
+      return summarizePathAction(
+        `${match[1].slice(0, 1).toUpperCase()}${match[1].slice(1).toLowerCase()}`,
+        rawTarget,
+      );
+    }
+  }
+  match = normalized.match(/^path ([^,]+), from .*$/i);
+  if (match) {
+    return summarizePathAction("Checking", match[1]);
+  }
+  match = normalized.match(/^(?:command )?run (.+)$/i) ?? normalized.match(/^run (.+)$/i);
+  if (match) {
+    const commandSummary = summarizeCommandText(match[1]);
+    if (commandSummary) {
+      return commandSummary;
+    }
+  }
+  if (
+    /^command still running\b/i.test(normalized) ||
+    /^running a shell command$/i.test(normalized) ||
+    /^finished running a shell command$/i.test(normalized) ||
+    /^(command )?show\s*>>/i.test(normalized) ||
+    /^to\s+/i.test(normalized) ||
+    /^path\s+/i.test(normalized) ||
+    /:\s*$/.test(normalized) ||
+    /\bsession\s+[a-z0-9]+(?:-[a-z0-9]+)+\b/i.test(normalized) ||
+    /^[a-z0-9]+(?:-[a-z0-9]+)+$/i.test(normalized) ||
+    /\bTraceback\b/.test(normalized) ||
+    /[{}[\]|]/.test(normalized) ||
+    /https?:\/\//i.test(normalized) ||
+    /\/Users\/|\/tmp\/|[A-Za-z]:\\/.test(normalized)
+  ) {
+    return "";
+  }
+  const words = normalized.split(/\s+/u);
+  if (words.length > 18 || words.length < 3) {
+    return "";
+  }
+  return normalized;
+}
+
+function summarizeToolActivitySubject(name?: string): string {
+  const normalized = normalizeOptionalLowercaseString(name);
+  if (!normalized || normalized === "tool" || normalized === "item" || normalized === "step") {
+    return "";
+  }
+  if (normalized === "read" || normalized === "view") {
+    return "reviewing file contents";
+  }
+  if (normalized === "write" || normalized === "edit") {
+    return "updating a file";
+  }
+  if (normalized === "process") {
+    return "checking background processes";
+  }
+  if (normalized === "memory_search") {
+    return "checking memory notes";
+  }
+  if (normalized === "read_bash") {
+    return "checking command output";
+  }
+  if (normalized === "write_bash") {
+    return "interacting with a running command";
+  }
+  if (normalized === "stop_bash") {
+    return "stopping a running command";
+  }
+  if (normalized === "list_bash") {
+    return "checking running commands";
+  }
+  if (normalized === "read_agent" || normalized === "list_agents") {
+    return "checking background task progress";
+  }
+  if (normalized === "write_agent") {
+    return "messaging a background task";
+  }
+  if (normalized === "view") {
+    return "reading files";
+  }
+  if (normalized === "rg" || normalized.includes("grep") || normalized.includes("search")) {
+    return "searching the codebase";
+  }
+  if (normalized === "glob" || normalized.startsWith("find ")) {
+    return "finding files";
+  }
+  if (normalized === "bash" || normalized === "exec") {
+    return "";
+  }
+  if (normalized.includes("command")) {
+    return "checking a command result";
+  }
+  if (normalized.includes("browser") || normalized.includes("playwright")) {
+    return "using the browser";
+  }
+  if (normalized === "apply_patch" || normalized.includes("patch")) {
+    return "editing files";
+  }
+  if (normalized === "web_fetch") {
+    return "fetching a web page";
+  }
+  if (normalized === "web_search") {
+    return "searching the web";
+  }
+  if (normalized.startsWith("github-")) {
+    return "checking GitHub";
+  }
+  if (normalized === "sql") {
+    return "querying session data";
+  }
+  if (normalized === "task" || normalized.endsWith("agent")) {
+    return "delegating task work";
+  }
+  if (normalized === "ask_user") {
+    return "waiting on user input";
+  }
+  const humanized = normalized
+    .replace(/^functions\./, "")
+    .replace(/^github-mcp-server-/, "github ")
+    .replace(/[_-]+/g, " ")
+    .trim();
+  return humanized ? `using ${humanized}` : "";
+}
+
+function formatProgressLabel(text: string): string {
+  const normalized = text.trim();
+  if (!normalized) {
+    return "";
+  }
+  if (/^[A-Z[]/.test(normalized) || normalized.startsWith("I'") || normalized.startsWith("I’")) {
+    return normalized;
+  }
+  return `${normalized[0]?.toUpperCase() ?? ""}${normalized.slice(1)}`;
+}
+
+function scoreProgressLabel(source: string, label: string): number {
+  const normalizedSource = normalizeOptionalLowercaseString(source) ?? "";
+  const normalizedLabel = normalizeOptionalLowercaseString(label) ?? "";
+  if (!normalizedLabel) {
+    return 0;
+  }
+  if (normalizedSource === "reasoning") {
+    return 400;
+  }
+  if (normalizedSource === "working_status" || normalizedSource === "plan_update") {
+    return 325;
+  }
+  if (/^(editing|updating|reviewing|checking) [^ ]+\.[a-z0-9]+$/i.test(label)) {
+    return 275;
+  }
+  if (/^(running|building|searching|checking|reviewing|editing|updating) /i.test(label)) {
+    return 225;
+  }
+  if (/^(waiting on|finished|issue while) /i.test(normalizedLabel)) {
+    return 175;
+  }
+  if (
+    normalizedLabel === "reviewing file contents" ||
+    normalizedLabel === "checking background processes" ||
+    normalizedLabel === "checking command output" ||
+    normalizedLabel === "checking running commands" ||
+    normalizedLabel === "checking background task progress" ||
+    normalizedLabel === "checking a command result" ||
+    normalizedLabel === "checking memory notes" ||
+    normalizedLabel === "querying session data" ||
+    normalizedLabel === "finding files" ||
+    normalizedLabel === "using the browser"
+  ) {
+    return 125;
+  }
+  return 150;
+}
+
+function summarizeToolStartProgressLabel(payload: {
+  name?: string;
+  phase?: string;
+  args?: Record<string, unknown>;
+}): string {
+  const phase = normalizeOptionalLowercaseString(payload.phase);
+  if (phase === "end" || phase === "complete" || phase === "completed") {
+    return "";
+  }
+  const args =
+    payload.args && typeof payload.args === "object" && !Array.isArray(payload.args)
+      ? payload.args
+      : undefined;
+  const readPathArg = ["path", "filePath", "expandedPath", "file", "outputPath"].find(
+    (key) => typeof args?.[key] === "string" && (args[key] as string).trim(),
+  );
+  if (readPathArg) {
+    const toolName = normalizeOptionalLowercaseString(payload.name);
+    const action =
+      toolName === "read" || toolName === "view"
+        ? "Reviewing"
+        : toolName === "edit" || toolName === "apply_patch"
+          ? "Editing"
+          : "Updating";
+    const summary = sanitizeProgressFreeformText(`${action.toLowerCase()} ${args?.[readPathArg]}`);
+    if (summary) {
+      return summary;
+    }
+  }
+  const commandText =
+    typeof args?.command === "string"
+      ? args.command
+      : typeof args?.description === "string"
+        ? args.description
+        : typeof args?.prompt === "string"
+          ? args.prompt
+          : undefined;
+  if (commandText) {
+    const commandSummary = sanitizeProgressFreeformText(`run ${commandText}`);
+    if (commandSummary) {
+      return commandSummary;
+    }
+  }
+  return summarizeToolActivitySubject(payload.name);
+}
+
+function summarizeItemProgressLabel(payload: {
+  itemId?: string;
+  kind?: string;
+  title?: string;
+  name?: string;
+  phase?: string;
+  status?: string;
+  summary?: string;
+  progressText?: string;
+  meta?: string;
+}): string {
+  const explicit = sanitizeProgressFreeformText(
+    payload.summary ?? payload.progressText ?? payload.meta,
+  );
+  if (explicit) {
+    return explicit;
+  }
+  const subject = summarizeToolActivitySubject(payload.name ?? payload.title ?? payload.kind);
+  if (!subject) {
+    return "";
+  }
+  const phase = normalizeOptionalLowercaseString(payload.phase);
+  const status = normalizeOptionalLowercaseString(payload.status);
+  if (status === "failed" || status === "error") {
+    return `issue while ${subject}`;
+  }
+  if (
+    phase === "end" ||
+    status === "completed" ||
+    status === "complete" ||
+    status === "success" ||
+    status === "succeeded"
+  ) {
+    return `finished ${subject}`;
+  }
+  if (status === "pending") {
+    return `waiting on ${subject}`;
+  }
+  return subject;
+}
+
+function summarizeCommandOutputProgressLabel(payload: {
+  title?: string;
+  name?: string;
+  output?: string;
+  phase?: string;
+  status?: string;
+  exitCode?: number | null;
+}): string {
+  const phase = normalizeOptionalLowercaseString(payload.phase);
+  const status = normalizeOptionalLowercaseString(payload.status);
+  const explicit =
+    sanitizeProgressFreeformText(payload.title) ||
+    sanitizeProgressFreeformText(payload.name) ||
+    sanitizeProgressFreeformText(payload.output?.split("\n", 1)[0]);
+  if (explicit) {
+    return explicit;
+  }
+  if ((typeof payload.exitCode === "number" && payload.exitCode !== 0) || status === "failed") {
+    return "A shell command failed";
+  }
+  if (phase === "end" || status === "completed" || status === "success" || status === "succeeded") {
+    return "";
+  }
+  return "";
+}
+
 const resolveHarnessSourceVisibleRepliesDefault = (params: {
   cfg: OpenClawConfig;
   ctx: FinalizedMsgContext;
@@ -436,6 +838,17 @@ export async function dispatchReplyFromConfig(
           "",
       ) ?? "off",
   });
+  const resolveProgressMode = createResolveProgressMode({
+    sessionKey: acpDispatchSessionKey,
+    storePath: sessionStoreEntry.storePath,
+    fallbackMode:
+      normalizeProgressMode(
+        typeof sessionStoreEntry.entry?.progressMode === "string"
+          ? sessionStoreEntry.entry.progressMode
+          : undefined,
+      ) ?? "native",
+  });
+  const shouldUsePacedProgress = () => resolveProgressMode() === "paced";
   const replyRoute = resolveEffectiveReplyRoute({ ctx, entry: sessionStoreEntry.entry });
   // Restore route thread context only from the active turn or the thread-scoped session key.
   // Do not read thread ids from the normalised session store here: `origin.threadId` can be
@@ -937,23 +1350,99 @@ export async function dispatchReplyFromConfig(
       !isSlackNonDirectSurface && (ctx.ChatType !== "group" || ctx.IsForum === true);
     const shouldSendToolSummaries = shouldSendVerboseProgressMessages;
     const shouldSendToolStartStatuses = shouldSendVerboseProgressMessages;
-    const sentProgressTexts: string[] = [];
-    const rememberSentProgressText = (text?: string) => {
+    const sentPacedProgressTexts: string[] = [];
+    const progressSessionKey = acpDispatchSessionKey ?? sessionKey ?? "unknown";
+    const logProgressEvent = (
+      event: string,
+      extras?: {
+        source?: string;
+        label?: string;
+        reason?: string;
+        chatType?: string;
+        delivery?: string;
+      },
+      options?: { always?: boolean },
+    ) => {
+      const mode = resolveProgressMode();
+      if (!options?.always && mode !== "paced") {
+        return;
+      }
+      const parts = [
+        "[progress]",
+        `event=${event}`,
+        `session=${JSON.stringify(progressSessionKey)}`,
+        `mode=${mode}`,
+      ];
+      if (routeThreadId !== undefined && routeThreadId !== null && `${routeThreadId}`.trim()) {
+        parts.push(`thread=${JSON.stringify(`${routeThreadId}`)}`);
+      }
+      if (extras?.chatType) {
+        parts.push(`chatType=${JSON.stringify(extras.chatType)}`);
+      }
+      if (extras?.delivery) {
+        parts.push(`delivery=${JSON.stringify(extras.delivery)}`);
+      }
+      if (extras?.source) {
+        parts.push(`source=${extras.source}`);
+      }
+      if (extras?.label) {
+        parts.push(`label=${JSON.stringify(extras.label)}`);
+      }
+      if (extras?.reason) {
+        parts.push(`reason=${JSON.stringify(extras.reason)}`);
+      }
+      console.log(parts.join(" "));
+    };
+    const rememberSentPacedProgressText = (text?: string) => {
       const normalized = normalizeOptionalString(text)?.trim();
       if (!normalized) {
         return;
       }
-      if (!sentProgressTexts.includes(normalized)) {
-        sentProgressTexts.push(normalized);
+      if (!sentPacedProgressTexts.includes(normalized)) {
+        sentPacedProgressTexts.push(normalized);
       }
     };
+    const formatPacedProgressText = (text: string) => `[Paced Progress]: ${text}`;
+    const syntheticProgressReplyToId =
+      normalizeOptionalString(ctx.RootMessageId) ??
+      normalizeOptionalString(ctx.ReplyToIdFull) ??
+      normalizeOptionalString(ctx.ReplyToId) ??
+      normalizeOptionalString(ctx.MessageSidFull) ??
+      normalizeOptionalString(ctx.MessageSid);
+    const applySyntheticProgressReplyTarget = (payload: ReplyPayload): ReplyPayload => {
+      if (
+        !syntheticProgressReplyToId ||
+        !resolveSendableOutboundReplyParts(payload).hasContent ||
+        payload.replyToId ||
+        payload.replyToCurrent === false
+      ) {
+        return payload;
+      }
+      return {
+        ...payload,
+        replyToId: syntheticProgressReplyToId,
+        replyToCurrent: true,
+      };
+    };
+    let progressReporter: ReturnType<typeof createProgressSummaryReporter> | undefined;
+    logProgressEvent(
+      "dispatch_start",
+      {
+        chatType: normalizeOptionalString(ctx.ChatType) ?? "direct",
+        delivery: sourceReplyDeliveryMode,
+      },
+      { always: true },
+    );
     const sendFinalPayload = async (
       payload: ReplyPayload,
     ): Promise<{ queuedFinal: boolean; routedFinalCount: number }> => {
       if (resolveSendableOutboundReplyParts(payload).hasContent) {
         markInboundDedupeReplayUnsafe();
       }
-      const dedupedPayload = trimFinalReplyAgainstProgress(payload, sentProgressTexts);
+      const dedupedPayload =
+        sentPacedProgressTexts.length > 0
+          ? trimFinalReplyAgainstProgress(payload, sentPacedProgressTexts)
+          : payload;
       const ttsPayload = await maybeApplyTtsToReplyPayload({
         payload: dedupedPayload,
         cfg,
@@ -972,12 +1461,20 @@ export async function dispatchReplyFromConfig(
             `dispatch-from-config: route-reply (final) failed: ${result.error ?? "unknown error"}`,
           );
         }
+        if (result.ok && resolveSendableOutboundReplyParts(normalizedPayload).hasContent) {
+          progressReporter?.noteVisibleDelivery();
+          logProgressEvent("visible_delivery", { source: "final" });
+        }
         return {
           queuedFinal: result.ok,
           routedFinalCount: result.ok ? 1 : 0,
         };
       }
       markInboundDedupeReplayUnsafe();
+      if (resolveSendableOutboundReplyParts(normalizedPayload).hasContent) {
+        progressReporter?.noteVisibleDelivery();
+        logProgressEvent("visible_delivery", { source: "final" });
+      }
       return {
         queuedFinal: dispatcher.sendFinalReply(normalizedPayload),
         routedFinalCount: 0,
@@ -1103,17 +1600,53 @@ export async function dispatchReplyFromConfig(
       const firstSentence = normalized.split(/(?<=[.!?])\s+/u, 1)[0] ?? normalized;
       return normalizeWorkingLabel(firstSentence);
     };
-    const progressReporter = createProgressSummaryReporter({
-      shouldSend: () => !suppressDelivery && shouldSendToolStartStatuses,
+    let preferredPacedProgressLabel = "";
+    let preferredPacedProgressScore = 0;
+    const notePacedProgress = (source: string, label?: string) => {
+      const normalizedLabel = formatProgressLabel(normalizeWorkingLabel(label ?? ""));
+      if (!normalizedLabel || !shouldUsePacedProgress()) {
+        return;
+      }
+      const score = scoreProgressLabel(source, normalizedLabel);
+      if (!score) {
+        return;
+      }
+      if (
+        preferredPacedProgressLabel &&
+        normalizedLabel !== preferredPacedProgressLabel &&
+        score < preferredPacedProgressScore
+      ) {
+        return;
+      }
+      preferredPacedProgressLabel = normalizedLabel;
+      preferredPacedProgressScore = score;
+      logProgressEvent("note", { source, label: normalizedLabel });
+      progressReporter?.noteProgress(normalizedLabel);
+    };
+    const noteVisibleProgressDelivery = (source: string, payload?: ReplyPayload) => {
+      if (payload && !resolveSendableOutboundReplyParts(payload).hasContent) {
+        return;
+      }
+      preferredPacedProgressLabel = "";
+      preferredPacedProgressScore = 0;
+      progressReporter?.noteVisibleDelivery();
+      logProgressEvent("visible_delivery", { source });
+    };
+    progressReporter = createProgressSummaryReporter({
+      shouldSend: () =>
+        !suppressDelivery && shouldSendToolStartStatuses && shouldUsePacedProgress(),
       send: async (text) => {
-        const payload: ReplyPayload = { text };
+        const payload = applySyntheticProgressReplyTarget({
+          text: formatPacedProgressText(text),
+        });
+        logProgressEvent("emit", { source: "reporter", label: text });
         if (shouldRouteToOriginating) {
           await sendPayloadAsync(payload, undefined, false);
-          rememberSentProgressText(text);
+          rememberSentPacedProgressText(text);
           return;
         }
         dispatcher.sendToolResult(payload);
-        rememberSentProgressText(text);
+        rememberSentPacedProgressText(text);
       },
     });
     const maybeSendWorkingStatus = async (label: string): Promise<void> => {
@@ -1121,7 +1654,9 @@ export async function dispatchReplyFromConfig(
         return;
       }
       const normalizedLabel = normalizeWorkingLabel(label);
-      progressReporter.noteProgress(normalizedLabel);
+      if (shouldUsePacedProgress()) {
+        notePacedProgress("working_status", normalizedLabel);
+      }
       if (
         !shouldEmitVerboseProgress() ||
         !shouldSendToolStartStatuses ||
@@ -1133,19 +1668,17 @@ export async function dispatchReplyFromConfig(
       }
       toolStartStatusesSent.add(normalizedLabel);
       toolStartStatusCount += 1;
-      const payload: ReplyPayload = {
+      const payload = applySyntheticProgressReplyTarget({
         text: `Working: ${normalizedLabel}`,
-      };
+      });
       if (shouldRouteToOriginating) {
         await sendPayloadAsync(payload, undefined, false);
-        rememberSentProgressText(payload.text);
-        progressReporter.noteVisibleDelivery();
+        noteVisibleProgressDelivery("working_status", payload);
         return;
       }
       markInboundDedupeReplayUnsafe();
       dispatcher.sendToolResult(payload);
-      rememberSentProgressText(payload.text);
-      progressReporter.noteVisibleDelivery();
+      noteVisibleProgressDelivery("working_status", payload);
     };
     const sendPlanUpdate = async (payload: {
       explanation?: string;
@@ -1154,19 +1687,17 @@ export async function dispatchReplyFromConfig(
       if (suppressDelivery || !shouldEmitVerboseProgress() || !shouldSendVerboseProgressMessages) {
         return;
       }
-      const replyPayload: ReplyPayload = {
+      const replyPayload = applySyntheticProgressReplyTarget({
         text: formatPlanUpdateText(payload),
-      };
+      });
       if (shouldRouteToOriginating) {
         await sendPayloadAsync(replyPayload, undefined, false);
-        rememberSentProgressText(replyPayload.text);
-        progressReporter.noteVisibleDelivery();
+        noteVisibleProgressDelivery("plan_update", replyPayload);
         return;
       }
       markInboundDedupeReplayUnsafe();
       dispatcher.sendToolResult(replyPayload);
-      rememberSentProgressText(replyPayload.text);
-      progressReporter.noteVisibleDelivery();
+      noteVisibleProgressDelivery("plan_update", replyPayload);
     };
     const summarizeApprovalLabel = (payload: {
       status?: string;
@@ -1257,6 +1788,9 @@ export async function dispatchReplyFromConfig(
       params.replyOptions?.suppressDefaultToolProgressMessages === true;
     const shouldSuppressDefaultToolProgressMessages = () =>
       suppressDefaultToolProgressMessages && !shouldEmitVerboseProgress();
+    const onToolStartFromReplyOptions = params.replyOptions?.onToolStart;
+    const onItemEventFromReplyOptions = params.replyOptions?.onItemEvent;
+    const onCommandOutputFromReplyOptions = params.replyOptions?.onCommandOutput;
     const onToolResultFromReplyOptions = params.replyOptions?.onToolResult;
     const onPlanUpdateFromReplyOptions = params.replyOptions?.onPlanUpdate;
     const onApprovalEventFromReplyOptions = params.replyOptions?.onApprovalEvent;
@@ -1297,14 +1831,32 @@ export async function dispatchReplyFromConfig(
           if (!label) {
             return;
           }
-          progressReporter.noteProgress(label);
+          notePacedProgress("reasoning", label);
         },
         onReasoningEnd: wrapProgressCallback(params.replyOptions?.onReasoningEnd),
         onAssistantMessageStart: wrapProgressCallback(params.replyOptions?.onAssistantMessageStart),
         onBlockReplyQueued: wrapProgressCallback(params.replyOptions?.onBlockReplyQueued),
-        onToolStart: wrapProgressCallback(params.replyOptions?.onToolStart),
-        onItemEvent: wrapProgressCallback(params.replyOptions?.onItemEvent),
-        onCommandOutput: wrapProgressCallback(params.replyOptions?.onCommandOutput),
+        onToolStart: async (payload) => {
+          markProgress();
+          if (!suppressAutomaticSourceDelivery) {
+            await onToolStartFromReplyOptions?.(payload);
+          }
+          notePacedProgress("tool_start", summarizeToolStartProgressLabel(payload));
+        },
+        onItemEvent: async (payload) => {
+          markProgress();
+          if (!suppressAutomaticSourceDelivery) {
+            await onItemEventFromReplyOptions?.(payload);
+          }
+          notePacedProgress("item", summarizeItemProgressLabel(payload));
+        },
+        onCommandOutput: async (payload) => {
+          markProgress();
+          if (!suppressAutomaticSourceDelivery) {
+            await onCommandOutputFromReplyOptions?.(payload);
+          }
+          notePacedProgress("command_output", summarizeCommandOutputProgressLabel(payload));
+        },
         onCompactionStart: wrapProgressCallback(params.replyOptions?.onCompactionStart),
         onCompactionEnd: wrapProgressCallback(params.replyOptions?.onCompactionEnd),
         onToolResult: (payload: ReplyPayload) => {
@@ -1352,6 +1904,7 @@ export async function dispatchReplyFromConfig(
               markInboundDedupeReplayUnsafe();
               dispatcher.sendToolResult(deliveryPayload);
             }
+            noteVisibleProgressDelivery("tool_result", deliveryPayload);
           };
           return run();
         },
@@ -1475,6 +2028,7 @@ export async function dispatchReplyFromConfig(
               markInboundDedupeReplayUnsafe();
               dispatcher.sendBlockReply(normalizedPayload);
             }
+            noteVisibleProgressDelivery("block", normalizedPayload);
           };
           return run();
         },

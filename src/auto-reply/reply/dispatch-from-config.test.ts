@@ -1831,8 +1831,7 @@ describe("dispatchReplyFromConfig", () => {
           setTimeout(
             () =>
               resolve({
-                text:
-                  "Inspecting payload dependencies to decide the safest fix. The actual change is a tiny import cleanup.",
+                text: "Inspecting payload dependencies to decide the safest fix. The actual change is a tiny import cleanup.",
               } satisfies ReplyPayload),
             11_000,
           );
@@ -1846,12 +1845,180 @@ describe("dispatchReplyFromConfig", () => {
       expect(dispatcher.sendToolResult).toHaveBeenNthCalledWith(
         1,
         expect.objectContaining({
-          text: "Working: Inspecting payload dependencies to decide the safest fix.",
+          text: "[Paced Progress]: Inspecting payload dependencies to decide the safest fix.",
         }),
       );
       expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({
         text: "The actual change is a tiny import cleanup.",
       });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps native mode free of synthetic paced progress updates", async () => {
+    vi.useFakeTimers();
+    try {
+      setNoAbort();
+      sessionStoreMocks.currentEntry = {
+        progressMode: "native",
+      };
+      const cfg = emptyConfig;
+      const dispatcher = createDispatcher();
+      const ctx = buildTestCtx({
+        Provider: "telegram",
+        ChatType: "direct",
+        SessionKey: "agent:main:main",
+      });
+
+      const replyResolver = (_ctx: MsgContext, opts?: GetReplyOptions, _cfg?: OpenClawConfig) => {
+        void opts?.onReasoningStream?.({
+          text: "Inspecting payload dependencies to decide the safest fix.",
+        });
+        return new Promise<ReplyPayload>((resolve) => {
+          setTimeout(
+            () =>
+              resolve({
+                text: "Inspecting payload dependencies to decide the safest fix. The actual change is a tiny import cleanup.",
+              } satisfies ReplyPayload),
+            11_000,
+          );
+        });
+      };
+
+      const dispatchPromise = dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
+      await vi.advanceTimersByTimeAsync(11_000);
+      await dispatchPromise;
+
+      expect(dispatcher.sendToolResult).not.toHaveBeenCalled();
+      expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({
+        text: "Inspecting payload dependencies to decide the safest fix. The actual change is a tiny import cleanup.",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a reasoning summary instead of replacing it with a lower-signal tool label", async () => {
+    vi.useFakeTimers();
+    try {
+      setNoAbort();
+      sessionStoreMocks.currentEntry = {
+        progressMode: "paced",
+      };
+      const cfg = emptyConfig;
+      const dispatcher = createDispatcher();
+      const ctx = buildTestCtx({
+        Provider: "telegram",
+        ChatType: "direct",
+        SessionKey: "agent:main:main",
+      });
+
+      const replyResolver = (_ctx: MsgContext, opts?: GetReplyOptions, _cfg?: OpenClawConfig) => {
+        void opts?.onReasoningStream?.({
+          text: "Inspecting payload dependencies to decide the safest fix.",
+        });
+        void opts?.onToolStart?.({
+          name: "view",
+          phase: "start",
+        });
+        return new Promise<ReplyPayload>((resolve) => {
+          setTimeout(() => resolve({ text: "done" } satisfies ReplyPayload), 11_000);
+        });
+      };
+
+      const dispatchPromise = dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(firstToolResultPayload(dispatcher)).toEqual(
+        expect.objectContaining({
+          text: "[Paced Progress]: Inspecting payload dependencies to decide the safest fix.",
+        }),
+      );
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await dispatchPromise;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("turns file-based tool activity into concrete paced labels", async () => {
+    vi.useFakeTimers();
+    try {
+      setNoAbort();
+      sessionStoreMocks.currentEntry = {
+        progressMode: "paced",
+      };
+      const cfg = emptyConfig;
+      const dispatcher = createDispatcher();
+      const ctx = buildTestCtx({
+        Provider: "telegram",
+        ChatType: "direct",
+        SessionKey: "agent:main:main",
+      });
+
+      const replyResolver = (_ctx: MsgContext, opts?: GetReplyOptions, _cfg?: OpenClawConfig) => {
+        void opts?.onToolStart?.({
+          name: "edit",
+          phase: "start",
+          args: {
+            path: "/Users/theclaw/source/repos/openclaw/extensions/bluebubbles/src/monitor.ts",
+          },
+        });
+        return new Promise<ReplyPayload>((resolve) => {
+          setTimeout(() => resolve({ text: "done" } satisfies ReplyPayload), 11_000);
+        });
+      };
+
+      const dispatchPromise = dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(firstToolResultPayload(dispatcher)).toEqual(
+        expect.objectContaining({
+          text: "[Paced Progress]: Editing monitor.ts",
+        }),
+      );
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await dispatchPromise;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops low-signal shell snippets from paced summaries", async () => {
+    vi.useFakeTimers();
+    try {
+      setNoAbort();
+      sessionStoreMocks.currentEntry = {
+        progressMode: "paced",
+      };
+      const cfg = emptyConfig;
+      const dispatcher = createDispatcher();
+      const ctx = buildTestCtx({
+        Provider: "telegram",
+        ChatType: "direct",
+        SessionKey: "agent:main:main",
+      });
+
+      const replyResolver = (_ctx: MsgContext, opts?: GetReplyOptions, _cfg?: OpenClawConfig) => {
+        void opts?.onCommandOutput?.({
+          output: "show >> (in ~/.openclaw/workspace)",
+        });
+        return new Promise<ReplyPayload>((resolve) => {
+          setTimeout(() => resolve({ text: "done" } satisfies ReplyPayload), 11_000);
+        });
+      };
+
+      const dispatchPromise = dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
+
+      await vi.advanceTimersByTimeAsync(10_500);
+      expect(dispatcher.sendToolResult).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(500);
+      await dispatchPromise;
+      expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({ text: "done" });
     } finally {
       vi.useRealTimers();
     }
