@@ -825,6 +825,7 @@ export async function dispatchReplyFromConfig(
   const sessionStoreEntry = boundAcpDispatchSessionKey
     ? resolveSessionStoreLookup({ ...ctx, SessionKey: boundAcpDispatchSessionKey }, cfg)
     : initialSessionStoreEntry;
+  let progressReporter: ReturnType<typeof createProgressSummaryReporter> | undefined;
   const sessionAgentId = resolveSessionAgentId({ sessionKey: acpDispatchSessionKey, config: cfg });
   const sessionAgentCfg = resolveAgentConfig(cfg, sessionAgentId);
   const shouldEmitVerboseProgress = createShouldEmitVerboseProgress({
@@ -1424,7 +1425,6 @@ export async function dispatchReplyFromConfig(
         replyToCurrent: true,
       };
     };
-    let progressReporter: ReturnType<typeof createProgressSummaryReporter> | undefined;
     logProgressEvent(
       "dispatch_start",
       {
@@ -2174,5 +2174,7 @@ export async function dispatchReplyFromConfig(
     recordProcessed("error", { error: String(err) });
     markIdle("message_error");
     throw err;
+  } finally {
+    progressReporter?.dispose();
   }
 }

@@ -1762,6 +1762,46 @@ describe("dispatchReplyFromConfig", () => {
     }
   });
 
+  it("stops paced progress once the turn completes", async () => {
+    vi.useFakeTimers();
+    try {
+      setNoAbort();
+      sessionStoreMocks.currentEntry = {
+        progressMode: "paced",
+      };
+      const cfg = emptyConfig;
+      const dispatcher = createDispatcher();
+      const ctx = buildTestCtx({
+        Provider: "telegram",
+        ChatType: "direct",
+        SessionKey: "agent:main:main",
+      });
+
+      const replyResolver = (_ctx: MsgContext, opts?: GetReplyOptions, _cfg?: OpenClawConfig) => {
+        void opts?.onToolStart?.({
+          name: "view",
+          phase: "start",
+        });
+        return new Promise<ReplyPayload>((resolve) => {
+          setTimeout(() => resolve({ text: "done" } satisfies ReplyPayload), 11_000);
+        });
+      };
+
+      const dispatchPromise = dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
+
+      await vi.advanceTimersByTimeAsync(11_000);
+      await dispatchPromise;
+
+      expect(dispatcher.sendToolResult).toHaveBeenCalledTimes(1);
+      expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({ text: "done" });
+
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(dispatcher.sendToolResult).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("threads paced progress updates to the active reply target", async () => {
     vi.useFakeTimers();
     try {
