@@ -7998,6 +7998,7 @@ describe("sendPolicy deny — suppress delivery, not processing (#53328)", () =>
     const dispatcher = createDispatcher();
     const replyResolver = vi.fn(async (_ctx: MsgContext, opts?: GetReplyOptions) => {
       expect(opts?.sourceReplyDeliveryMode).toBe("automatic");
+      expect(opts?.disableBlockStreaming).toBe(false);
       return { text: "visible direct reply" } satisfies ReplyPayload;
     });
 
@@ -8296,6 +8297,7 @@ describe("sendPolicy deny — suppress delivery, not processing (#53328)", () =>
     const dispatcher = createDispatcher();
     const replyResolver = vi.fn(async (_ctx: MsgContext, opts?: GetReplyOptions) => {
       expect(opts?.sourceReplyDeliveryMode).toBe("automatic");
+      expect(opts?.disableBlockStreaming).toBeUndefined();
       return { text: "visible switched-model reply" } satisfies ReplyPayload;
     });
 
@@ -8448,6 +8450,36 @@ describe("sendPolicy deny — suppress delivery, not processing (#53328)", () =>
     expect(replyResolver).toHaveBeenCalledTimes(1);
     expect(result.queuedFinal).toBe(false);
     expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
+  });
+
+  it("preserves an explicit disableBlockStreaming override for direct visible replies", async () => {
+    setNoAbort();
+    sessionStoreMocks.currentEntry = undefined;
+    const dispatcher = createDispatcher();
+    const replyResolver = vi.fn(async (_ctx: MsgContext, opts?: GetReplyOptions) => {
+      expect(opts?.sourceReplyDeliveryMode).toBe("automatic");
+      expect(opts?.disableBlockStreaming).toBe(true);
+      return { text: "visible direct reply" } satisfies ReplyPayload;
+    });
+
+    const result = await dispatchReplyFromConfig({
+      ctx: buildTestCtx({
+        ChatType: "direct",
+        SessionKey: "agent:main:telegram:direct:U1",
+      }),
+      cfg: emptyConfig,
+      dispatcher,
+      replyResolver,
+      replyOptions: {
+        disableBlockStreaming: true,
+      },
+    });
+
+    expect(replyResolver).toHaveBeenCalledTimes(1);
+    expect(result.queuedFinal).toBe(true);
+    expect(dispatcher.sendFinalReply).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "visible direct reply" }),
+    );
   });
 
   it("falls back to automatic group/channel delivery when the message tool is unavailable", async () => {
