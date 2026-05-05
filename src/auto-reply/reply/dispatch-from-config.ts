@@ -2259,6 +2259,12 @@ export async function dispatchReplyFromConfig(
     const suppressToolErrorWarnings =
       params.replyOptions?.suppressToolErrorWarnings ??
       (observedVisibleToolErrorProgress ? true : undefined);
+    const shouldForceVisibleDirectBlockStreaming =
+      params.replyOptions?.disableBlockStreaming === undefined &&
+      ctx.CommandSource !== "native" &&
+      chatType === "direct" &&
+      sourceReplyDeliveryMode === "automatic" &&
+      !suppressDelivery;
     const onToolResultFromReplyOptions = params.replyOptions?.onToolResult;
     const onPlanUpdateFromReplyOptions = params.replyOptions?.onPlanUpdate;
     const onApprovalEventFromReplyOptions = params.replyOptions?.onApprovalEvent;
@@ -2345,6 +2351,9 @@ export async function dispatchReplyFromConfig(
           {
             ...getReplyOptions(),
             sourceReplyDeliveryMode,
+            disableBlockStreaming:
+              params.replyOptions?.disableBlockStreaming ??
+              (shouldForceVisibleDirectBlockStreaming ? false : undefined),
             suppressToolErrorWarnings,
             shouldSuppressToolErrorWarnings,
             typingPolicy: typing.typingPolicy,
