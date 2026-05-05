@@ -3,6 +3,8 @@ type ProgressSummaryReporterParams = {
   send: (text: string) => void | Promise<void>;
   initialDelayMs?: number;
   repeatDelayMs?: number;
+  visibleDeliveryCooldownMs?: number;
+  unchangedHeartbeatMs?: number;
   now?: () => number;
   schedule?: (fn: () => void, delayMs: number) => unknown;
   cancel?: (handle: unknown) => void;
@@ -14,8 +16,10 @@ export type ProgressSummaryReporter = {
   dispose: () => void;
 };
 
-const DEFAULT_INITIAL_DELAY_MS = 10_000;
-const DEFAULT_REPEAT_DELAY_MS = 60_000;
+const DEFAULT_INITIAL_DELAY_MS = 6_000;
+const DEFAULT_REPEAT_DELAY_MS = 20_000;
+const DEFAULT_VISIBLE_DELIVERY_COOLDOWN_MS = 10_000;
+const DEFAULT_UNCHANGED_HEARTBEAT_MS = 45_000;
 
 function normalizeProgressText(text?: string): string {
   const normalized = (text ?? "").replace(/\s+/g, " ").trim();
@@ -38,11 +42,18 @@ export function createProgressSummaryReporter(
     params.cancel ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
   const initialDelayMs = params.initialDelayMs ?? DEFAULT_INITIAL_DELAY_MS;
   const repeatDelayMs = params.repeatDelayMs ?? DEFAULT_REPEAT_DELAY_MS;
+  const visibleDeliveryCooldownMs =
+    params.visibleDeliveryCooldownMs ?? DEFAULT_VISIBLE_DELIVERY_COOLDOWN_MS;
+  const unchangedHeartbeatMs = Math.max(
+    repeatDelayMs,
+    params.unchangedHeartbeatMs ?? DEFAULT_UNCHANGED_HEARTBEAT_MS,
+  );
 
   const startedAt = now();
   let lastVisibleDeliveryAt: number | undefined;
   let latestProgressText = "";
   let lastSentProgressText = "";
+  let lastProgressAttemptAt: number | undefined;
   let disposed = false;
   let timerHandle: unknown;
   let sendChain = Promise.resolve();
@@ -60,18 +71,23 @@ export function createProgressSummaryReporter(
     if (disposed || !latestProgressText || !shouldSend()) {
       return;
     }
-    const dueAt =
-      lastVisibleDeliveryAt === undefined
+    const progressDueAt =
+      lastProgressAttemptAt === undefined
         ? startedAt + initialDelayMs
-        : lastVisibleDeliveryAt + repeatDelayMs;
+        : lastProgressAttemptAt + repeatDelayMs;
+    const visibleCooldownDueAt =
+      lastVisibleDeliveryAt === undefined
+        ? Number.NEGATIVE_INFINITY
+        : lastVisibleDeliveryAt + visibleDeliveryCooldownMs;
+    const unchangedHeartbeatDueAt =
+      latestProgressText === lastSentProgressText && lastProgressAttemptAt !== undefined
+        ? lastProgressAttemptAt + unchangedHeartbeatMs
+        : Number.NEGATIVE_INFINITY;
+    const dueAt = Math.max(progressDueAt, visibleCooldownDueAt, unchangedHeartbeatDueAt);
     const delayMs = Math.max(0, dueAt - now());
     timerHandle = schedule(() => {
       timerHandle = undefined;
       if (disposed || !latestProgressText || !shouldSend()) {
-        return;
-      }
-      if (latestProgressText === lastSentProgressText) {
-        scheduleNext();
         return;
       }
       const text = latestProgressText;
@@ -81,12 +97,13 @@ export function createProgressSummaryReporter(
             return;
           }
           await params.send(text);
-          lastSentProgressText = latestProgressText;
-          lastVisibleDeliveryAt = now();
+          const sentAt = now();
+          lastSentProgressText = text;
+          lastProgressAttemptAt = sentAt;
           scheduleNext();
         })
         .catch(() => {
-          lastVisibleDeliveryAt = now();
+          lastProgressAttemptAt = now();
           scheduleNext();
         });
     }, delayMs);

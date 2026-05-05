@@ -1698,7 +1698,7 @@ describe("dispatchReplyFromConfig", () => {
 
       const dispatchPromise = dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
 
-      await vi.advanceTimersByTimeAsync(9_999);
+      await vi.advanceTimersByTimeAsync(5_999);
       expect(dispatcher.sendToolResult).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(1);
@@ -1709,7 +1709,7 @@ describe("dispatchReplyFromConfig", () => {
         }),
       );
 
-      await vi.advanceTimersByTimeAsync(1_001);
+      await vi.advanceTimersByTimeAsync(5_001);
       await dispatchPromise;
 
       expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({ text: "done" });
@@ -1745,7 +1745,7 @@ describe("dispatchReplyFromConfig", () => {
 
       const dispatchPromise = dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
 
-      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(6_000);
       expect(dispatcher.sendToolResult).toHaveBeenNthCalledWith(
         1,
         expect.objectContaining({
@@ -1753,7 +1753,7 @@ describe("dispatchReplyFromConfig", () => {
         }),
       );
 
-      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.advanceTimersByTimeAsync(5_000);
       await dispatchPromise;
 
       expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({ text: "done" });
@@ -1792,7 +1792,7 @@ describe("dispatchReplyFromConfig", () => {
 
       const dispatchPromise = dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
 
-      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(6_000);
       expect(firstToolResultPayload(dispatcher)).toEqual(
         expect.objectContaining({
           text: "[Paced Progress]: Inspecting the BlueBubbles threading path before patching it.",
@@ -1801,7 +1801,7 @@ describe("dispatchReplyFromConfig", () => {
         }),
       );
 
-      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.advanceTimersByTimeAsync(5_000);
       await dispatchPromise;
     } finally {
       vi.useRealTimers();
@@ -1929,14 +1929,14 @@ describe("dispatchReplyFromConfig", () => {
 
       const dispatchPromise = dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
 
-      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(6_000);
       expect(firstToolResultPayload(dispatcher)).toEqual(
         expect.objectContaining({
           text: "[Paced Progress]: Inspecting payload dependencies to decide the safest fix.",
         }),
       );
 
-      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.advanceTimersByTimeAsync(5_000);
       await dispatchPromise;
     } finally {
       vi.useRealTimers();
@@ -1973,14 +1973,14 @@ describe("dispatchReplyFromConfig", () => {
 
       const dispatchPromise = dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
 
-      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(6_000);
       expect(firstToolResultPayload(dispatcher)).toEqual(
         expect.objectContaining({
           text: "[Paced Progress]: Editing monitor.ts",
         }),
       );
 
-      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.advanceTimersByTimeAsync(5_000);
       await dispatchPromise;
     } finally {
       vi.useRealTimers();
