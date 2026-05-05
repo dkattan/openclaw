@@ -1533,6 +1533,12 @@ export async function dispatchReplyFromConfig(
     const shouldSuppressProgressDelivery = () =>
       sendPolicyDenied ||
       (suppressDelivery && !shouldDeliverVerboseProgressDespiteSourceSuppression());
+    const shouldForceVisibleDirectBlockStreaming =
+      params.replyOptions?.disableBlockStreaming === undefined &&
+      ctx.CommandSource !== "native" &&
+      chatType === "direct" &&
+      sourceReplyDeliveryMode === "automatic" &&
+      !suppressDelivery;
     const onToolResultFromReplyOptions = params.replyOptions?.onToolResult;
     const onPlanUpdateFromReplyOptions = params.replyOptions?.onPlanUpdate;
     const onApprovalEventFromReplyOptions = params.replyOptions?.onApprovalEvent;
@@ -1573,6 +1579,9 @@ export async function dispatchReplyFromConfig(
         {
           ...params.replyOptions,
           sourceReplyDeliveryMode,
+          disableBlockStreaming:
+            params.replyOptions?.disableBlockStreaming ??
+            (shouldForceVisibleDirectBlockStreaming ? false : undefined),
           typingPolicy: typing.typingPolicy,
           suppressTyping: typing.suppressTyping,
           onPartialReply: wrapProgressCallback(params.replyOptions?.onPartialReply),
