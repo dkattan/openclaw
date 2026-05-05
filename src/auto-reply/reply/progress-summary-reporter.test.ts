@@ -21,7 +21,7 @@ describe("createProgressSummaryReporter", () => {
 
     await vi.advanceTimersByTimeAsync(1);
     expect(send).toHaveBeenCalledTimes(1);
-    expect(send).toHaveBeenCalledWith("Working: Inspecting payload dependencies.");
+    expect(send).toHaveBeenCalledWith("Inspecting payload dependencies.");
 
     reporter.dispose();
   });
@@ -43,7 +43,7 @@ describe("createProgressSummaryReporter", () => {
 
     await vi.advanceTimersByTimeAsync(51_000);
     expect(send).toHaveBeenCalledTimes(1);
-    expect(send).toHaveBeenCalledWith("Working: Reviewing config.");
+    expect(send).toHaveBeenCalledWith("Reviewing config.");
 
     reporter.dispose();
   });
@@ -67,7 +67,7 @@ describe("createProgressSummaryReporter", () => {
     reporter.noteProgress("Running targeted tests.");
     await vi.advanceTimersByTimeAsync(60_000);
     expect(send).toHaveBeenCalledTimes(2);
-    expect(send).toHaveBeenLastCalledWith("Still working: Running targeted tests.");
+    expect(send).toHaveBeenLastCalledWith("Running targeted tests.");
 
     reporter.dispose();
   });
