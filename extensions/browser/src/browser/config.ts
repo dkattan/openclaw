@@ -314,16 +314,9 @@ function ensureDefaultProfile(
 function ensureDefaultUserBrowserProfile(
   profiles: Record<string, BrowserProfileConfig>,
 ): Record<string, BrowserProfileConfig> {
-  const result = { ...profiles };
-  if (result.user) {
-    return result;
-  }
-  result.user = {
-    driver: "existing-session",
-    attachOnly: true,
-    color: "#00AA00",
-  };
-  return result;
+  // Local policy: do not auto-advertise the Chrome MCP existing-session `user` profile.
+  // On this host it requires visible browser consent and creates noisy failure modes.
+  return { ...profiles };
 }
 
 export function resolveBrowserConfig(

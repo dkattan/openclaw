@@ -450,6 +450,7 @@ export type ChannelThreadingContext = {
   ChatType?: string;
   CurrentMessageId?: string | number;
   ReplyToId?: string;
+  RootMessageId?: string;
   ReplyToIdFull?: string;
   ThreadLabel?: string;
   MessageThreadId?: string | number;

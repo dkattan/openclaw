@@ -64,6 +64,30 @@ describe("resolveCurrentDirectiveLevels", () => {
     expect(result.currentFastMode).toBe(true);
   });
 
+  it("prefers session progress mode over the native default", async () => {
+    const resolveDefaultThinkingLevel = vi.fn().mockResolvedValue("low");
+
+    const result = await resolveCurrentDirectiveLevels({
+      sessionEntry: {
+        progressMode: "paced",
+      },
+      resolveDefaultThinkingLevel,
+    });
+
+    expect(result.currentProgressMode).toBe("paced");
+  });
+
+  it("defaults progress mode to native when no session override is set", async () => {
+    const resolveDefaultThinkingLevel = vi.fn().mockResolvedValue("low");
+
+    const result = await resolveCurrentDirectiveLevels({
+      sessionEntry: {},
+      resolveDefaultThinkingLevel,
+    });
+
+    expect(result.currentProgressMode).toBe("native");
+  });
+
   it("prefers session reasoningLevel over agent default", async () => {
     const resolveDefaultThinkingLevel = vi.fn().mockResolvedValue("low");
 

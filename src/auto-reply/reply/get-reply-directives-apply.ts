@@ -54,6 +54,7 @@ function hasOnlyModelDirective(directives: InlineDirectives): boolean {
     directives.hasModelDirective &&
     !directives.hasThinkDirective &&
     !directives.hasFastDirective &&
+    !directives.hasProgressDirective &&
     !directives.hasVerboseDirective &&
     !directives.hasTraceDirective &&
     !directives.hasReasoningDirective &&
@@ -208,6 +209,7 @@ export async function applyInlineDirectiveOverrides(params: {
   const hasAnyDirective =
     directives.hasThinkDirective ||
     directives.hasFastDirective ||
+    directives.hasProgressDirective ||
     directives.hasVerboseDirective ||
     directives.hasTraceDirective ||
     directives.hasReasoningDirective ||
@@ -312,12 +314,13 @@ export async function applyInlineDirectiveOverrides(params: {
         return { kind: "reply", reply: { text: parts.join(" ") } };
       }
     }
-    const {
-      currentThinkLevel: resolvedDefaultThinkLevel,
-      currentFastMode,
-      currentVerboseLevel,
-      currentReasoningLevel,
-      currentElevatedLevel,
+      const {
+        currentThinkLevel: resolvedDefaultThinkLevel,
+        currentFastMode,
+        currentProgressMode,
+        currentVerboseLevel,
+        currentReasoningLevel,
+        currentElevatedLevel,
     } = await (
       await loadDirectiveLevels()
     ).resolveCurrentDirectiveLevels({
@@ -333,11 +336,12 @@ export async function applyInlineDirectiveOverrides(params: {
     ).handleDirectiveOnly({
       ...createDirectiveHandlingBase(),
       thinkingCatalog,
-      currentThinkLevel,
-      currentFastMode,
-      currentVerboseLevel,
-      currentReasoningLevel,
-      currentElevatedLevel,
+        currentThinkLevel,
+        currentFastMode,
+        currentProgressMode,
+        currentVerboseLevel,
+        currentReasoningLevel,
+        currentElevatedLevel,
       ctx,
       messageProvider: ctx.Provider,
       surface: ctx.Surface,

@@ -174,6 +174,10 @@ export async function persistInlineDirectives(params: {
       applyTraceOverride(sessionEntry, directives.traceLevel);
       updated = true;
     }
+    if (directives.hasProgressDirective && directives.progressMode) {
+      sessionEntry.progressMode = directives.progressMode;
+      updated = true;
+    }
     if (directives.hasReasoningDirective && directives.reasoningLevel) {
       if (directives.reasoningLevel === "off") {
         // Persist explicit off so it overrides model-capability defaults.

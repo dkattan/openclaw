@@ -194,6 +194,78 @@ describe("mixed inline directives", () => {
     expect(sessionEntry.reasoningLevel).toBe("off");
   });
 
+  it("emits directive ack while persisting inline progress mode in mixed messages", async () => {
+    const directives = parseInlineDirectives("please reply\n/progress paced");
+    const cfg = createConfig();
+    const sessionEntry = createSessionEntry();
+    const sessionStore = { "agent:main:sms:user": sessionEntry };
+
+    const fastLane = await applyInlineDirectivesFastLane({
+      directives,
+      commandAuthorized: true,
+      senderIsOwner: false,
+      ctx: { Surface: "sms" } as never,
+      cfg,
+      agentId: "main",
+      isGroup: false,
+      sessionEntry,
+      sessionStore,
+      sessionKey: "agent:main:sms:user",
+      storePath: undefined,
+      elevatedEnabled: false,
+      elevatedAllowed: false,
+      elevatedFailures: [],
+      messageProviderKey: "sms",
+      defaultProvider: "anthropic",
+      defaultModel: "claude-opus-4-6",
+      aliasIndex: { byAlias: new Map(), byKey: new Map() },
+      allowedModelKeys: new Set(),
+      allowedModelCatalog: [],
+      resetModelOverride: false,
+      provider: "anthropic",
+      model: "claude-opus-4-6",
+      initialModelLabel: "anthropic/claude-opus-4-6",
+      formatModelSwitchEvent: (label) => label,
+      agentCfg: cfg.agents?.defaults,
+      modelState: {
+        resolveDefaultThinkingLevel: async () => "off",
+        resolveThinkingCatalog: async () => [],
+        allowedModelKeys: new Set(),
+        allowedModelCatalog: [],
+        resetModelOverride: false,
+      },
+    });
+
+    expect(fastLane.directiveAck).toEqual({
+      text: "⚙️ Progress updates set to paced.",
+    });
+
+    await persistInlineDirectives({
+      directives,
+      cfg,
+      sessionEntry,
+      sessionStore,
+      sessionKey: "agent:main:sms:user",
+      storePath: undefined,
+      elevatedEnabled: false,
+      elevatedAllowed: false,
+      defaultProvider: "anthropic",
+      defaultModel: "claude-opus-4-6",
+      aliasIndex: { byAlias: new Map(), byKey: new Map() },
+      allowedModelKeys: new Set(),
+      provider: "anthropic",
+      model: "claude-opus-4-6",
+      initialModelLabel: "anthropic/claude-opus-4-6",
+      formatModelSwitchEvent: (label) => label,
+      agentCfg: cfg.agents?.defaults,
+      messageProvider: "sms",
+      surface: "sms",
+      gatewayClientScopes: [],
+    });
+
+    expect(sessionEntry.progressMode).toBe("paced");
+  });
+
   it("does not persist trace directives for unauthorized mixed messages", async () => {
     const directives = parseInlineDirectives("please reply\n/trace raw");
     const cfg = createConfig();

@@ -292,7 +292,11 @@ export const bluebubblesPlugin: ChannelPlugin<ResolvedBlueBubblesAccount, BlueBu
     threading: {
       buildToolContext: ({ context, hasRepliedRef }) => ({
         currentChannelId: normalizeOptionalString(context.To),
-        currentThreadTs: context.ReplyToIdFull ?? context.ReplyToId,
+        currentThreadTs:
+          normalizeOptionalString(context.MessageThreadId) ??
+          normalizeOptionalString(context.RootMessageId) ??
+          context.ReplyToIdFull ??
+          context.ReplyToId,
         hasRepliedRef,
       }),
     },

@@ -12,6 +12,7 @@ type BlueBubblesReplyCacheEntry = {
   chatId?: number;
   senderLabel?: string;
   body?: string;
+  rootMessageId?: string;
   timestamp: number;
 };
 
@@ -44,7 +45,15 @@ export function rememberBlueBubblesReplyCache(
     blueBubblesUuidToShortId.set(messageId, shortId);
   }
 
-  const fullEntry: BlueBubblesReplyCacheEntry = { ...entry, messageId, shortId };
+  const existing = blueBubblesReplyCacheByMessageId.get(messageId);
+  const rootMessageId =
+    normalizeOptionalString(entry.rootMessageId) ?? normalizeOptionalString(existing?.rootMessageId);
+  const fullEntry: BlueBubblesReplyCacheEntry = {
+    ...entry,
+    messageId,
+    shortId,
+    ...(rootMessageId ? { rootMessageId } : {}),
+  };
 
   // Refresh insertion order.
   blueBubblesReplyCacheByMessageId.delete(messageId);

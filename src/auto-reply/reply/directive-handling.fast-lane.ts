@@ -51,6 +51,7 @@ export async function applyInlineDirectivesFastLane(
   const {
     currentThinkLevel,
     currentFastMode,
+    currentProgressMode,
     currentVerboseLevel,
     currentReasoningLevel,
     currentElevatedLevel,
@@ -86,6 +87,7 @@ export async function applyInlineDirectivesFastLane(
     formatModelSwitchEvent,
     currentThinkLevel,
     currentFastMode,
+    currentProgressMode,
     currentVerboseLevel,
     currentReasoningLevel,
     currentElevatedLevel,

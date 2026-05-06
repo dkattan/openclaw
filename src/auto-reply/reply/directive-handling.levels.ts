@@ -1,9 +1,17 @@
-import type { ElevatedLevel, ReasoningLevel, ThinkLevel, VerboseLevel } from "../thinking.js";
+import {
+  normalizeProgressMode,
+  type ElevatedLevel,
+  type ProgressMode,
+  type ReasoningLevel,
+  type ThinkLevel,
+  type VerboseLevel,
+} from "../thinking.js";
 
 export async function resolveCurrentDirectiveLevels(params: {
   sessionEntry?: {
     thinkingLevel?: unknown;
     fastMode?: unknown;
+    progressMode?: unknown;
     verboseLevel?: unknown;
     reasoningLevel?: unknown;
     elevatedLevel?: unknown;
@@ -22,6 +30,7 @@ export async function resolveCurrentDirectiveLevels(params: {
 }): Promise<{
   currentThinkLevel: ThinkLevel | undefined;
   currentFastMode: boolean | undefined;
+  currentProgressMode: ProgressMode;
   currentVerboseLevel: VerboseLevel | undefined;
   currentReasoningLevel: ReasoningLevel;
   currentElevatedLevel: ElevatedLevel | undefined;
@@ -37,6 +46,12 @@ export async function resolveCurrentDirectiveLevels(params: {
       : typeof params.agentEntry?.fastModeDefault === "boolean"
         ? params.agentEntry.fastModeDefault
         : undefined;
+  const currentProgressMode =
+    normalizeProgressMode(
+      typeof params.sessionEntry?.progressMode === "string"
+        ? params.sessionEntry.progressMode
+        : undefined,
+    ) ?? "native";
   const currentVerboseLevel =
     (params.sessionEntry?.verboseLevel as VerboseLevel | undefined) ??
     (params.agentCfg?.verboseDefault as VerboseLevel | undefined);
@@ -51,6 +66,7 @@ export async function resolveCurrentDirectiveLevels(params: {
   return {
     currentThinkLevel,
     currentFastMode,
+    currentProgressMode,
     currentVerboseLevel,
     currentReasoningLevel,
     currentElevatedLevel,

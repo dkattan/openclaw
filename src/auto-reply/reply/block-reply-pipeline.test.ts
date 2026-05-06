@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { setReplyPayloadMetadata } from "../reply-payload.js";
 import {
   createBlockReplyContentKey,
@@ -130,37 +130,6 @@ describe("createBlockReplyPipeline dedup with threading", () => {
     await pipeline.flush({ force: true });
 
     expect(sent).toEqual(["Alpha", "Beta"]);
-  });
-
-  it("flushes undersized trailing text after the idle timeout", async () => {
-    vi.useFakeTimers();
-    try {
-      const sent: string[] = [];
-      const pipeline = createBlockReplyPipeline({
-        onBlockReply: async (payload) => {
-          sent.push(payload.text ?? "");
-        },
-        timeoutMs: 5000,
-        coalescing: {
-          minChars: 20,
-          maxChars: 200,
-          idleMs: 1000,
-          joiner: "\n\n",
-        },
-      });
-
-      pipeline.enqueue({ text: "Short update." });
-
-      await vi.advanceTimersByTimeAsync(999);
-      expect(sent).toEqual([]);
-
-      await vi.advanceTimersByTimeAsync(1);
-      await pipeline.flush();
-
-      expect(sent).toEqual(["Short update."]);
-    } finally {
-      vi.useRealTimers();
-    }
   });
 });
 

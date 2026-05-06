@@ -2,6 +2,7 @@ import type { ExecAsk, ExecSecurity, ExecTarget } from "../../infra/exec-approva
 import { extractModelDirective } from "../model.js";
 import type {
   ElevatedLevel,
+  ProgressMode,
   ReasoningLevel,
   ThinkLevel,
   TraceLevel,
@@ -11,6 +12,7 @@ import {
   extractElevatedDirective,
   extractExecDirective,
   extractFastDirective,
+  extractProgressDirective,
   extractReasoningDirective,
   extractStatusDirective,
   extractTraceDirective,
@@ -34,6 +36,9 @@ export type InlineDirectives = {
   hasFastDirective: boolean;
   fastMode?: boolean;
   rawFastMode?: string;
+  hasProgressDirective: boolean;
+  progressMode?: ProgressMode;
+  rawProgressMode?: string;
   hasReasoningDirective: boolean;
   reasoningLevel?: ReasoningLevel;
   rawReasoningLevel?: string;
@@ -105,11 +110,17 @@ export function parseInlineDirectives(
     hasDirective: hasFastDirective,
   } = extractFastDirective(traceCleaned);
   const {
+    cleaned: progressCleaned,
+    progressMode,
+    rawLevel: rawProgressMode,
+    hasDirective: hasProgressDirective,
+  } = extractProgressDirective(fastCleaned);
+  const {
     cleaned: reasoningCleaned,
     reasoningLevel,
     rawLevel: rawReasoningLevel,
     hasDirective: hasReasoningDirective,
-  } = extractReasoningDirective(fastCleaned);
+  } = extractReasoningDirective(progressCleaned);
   const {
     cleaned: elevatedCleaned,
     elevatedLevel,
@@ -182,6 +193,9 @@ export function parseInlineDirectives(
     hasFastDirective,
     fastMode,
     rawFastMode,
+    hasProgressDirective,
+    progressMode,
+    rawProgressMode,
     hasReasoningDirective,
     reasoningLevel,
     rawReasoningLevel,

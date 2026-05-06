@@ -1737,10 +1737,75 @@ describe("BlueBubbles webhook monitor", () => {
       // ReplyToId uses short ID "1" (first cached message) for token savings
       expect(callArgs.ctx.ReplyToId).toBe("1");
       expect(callArgs.ctx.ReplyToIdFull).toBe("cache-msg-0");
+      expect(callArgs.ctx.RootMessageId).toBe("cache-msg-0");
       expect(callArgs.ctx.ReplyToBody).toBe("original message (cached)");
       expect(callArgs.ctx.ReplyToSender).toBe("+15550000000");
       // Body uses inline [[reply_to:N]] tag format with short ID
       expect(callArgs.ctx.Body).toContain("[[reply_to:1]]");
+    });
+
+    it("hydrates RootMessageId from cached replied-to thread originator", async () => {
+      setupWebhookTarget();
+
+      const chatGuid = "iMessage;+;chat-thread-root-cache";
+
+      const originalPayload = createTimestampedNewMessagePayloadForTest({
+        text: "assistant threaded reply",
+        guid: "threaded-msg-0",
+        chatGuid,
+        isFromMe: true,
+        threadOriginatorGuid: "thread-root-0",
+      });
+
+      await dispatchWebhookPayload(originalPayload);
+
+      mockDispatchReplyWithBufferedBlockDispatcher.mockClear();
+
+      const replyPayload = createTimestampedNewMessagePayloadForTest({
+        text: "replying now",
+        guid: "threaded-msg-1",
+        chatGuid,
+        replyToMessageGuid: "threaded-msg-0",
+      });
+
+      await dispatchWebhookPayload(replyPayload);
+
+      expect(mockDispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalled();
+      const callArgs = getFirstDispatchCall();
+      expect(callArgs.ctx.ReplyToIdFull).toBe("threaded-msg-0");
+      expect(callArgs.ctx.RootMessageId).toBe("thread-root-0");
+    });
+
+    it("preserves cached thread roots for later replies to inbound messages", async () => {
+      setupWebhookTarget();
+
+      const chatGuid = "iMessage;+;chat-inbound-thread-root-cache";
+
+      const firstReply = createTimestampedNewMessagePayloadForTest({
+        text: "first threaded reply",
+        guid: "threaded-inbound-0",
+        chatGuid,
+        replyToMessageGuid: "thread-root-0",
+        threadOriginatorGuid: "thread-root-0",
+      });
+
+      await dispatchWebhookPayload(firstReply);
+
+      mockDispatchReplyWithBufferedBlockDispatcher.mockClear();
+
+      const secondReply = createTimestampedNewMessagePayloadForTest({
+        text: "second threaded reply",
+        guid: "threaded-inbound-1",
+        chatGuid,
+        replyToMessageGuid: "threaded-inbound-0",
+      });
+
+      await dispatchWebhookPayload(secondReply);
+
+      expect(mockDispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalled();
+      const callArgs = getFirstDispatchCall();
+      expect(callArgs.ctx.ReplyToIdFull).toBe("threaded-inbound-0");
+      expect(callArgs.ctx.RootMessageId).toBe("thread-root-0");
     });
 
     it("falls back to threadOriginatorGuid when reply metadata is absent", async () => {
@@ -1757,6 +1822,7 @@ describe("BlueBubbles webhook monitor", () => {
       expect(mockDispatchReplyWithBufferedBlockDispatcher).toHaveBeenCalled();
       const callArgs = getFirstDispatchCall();
       expect(callArgs.ctx.ReplyToId).toBe("msg-0");
+      expect(callArgs.ctx.RootMessageId).toBe("msg-0");
     });
   });
 
@@ -2014,6 +2080,33 @@ describe("BlueBubbles webhook monitor", () => {
   });
 
   describe("outbound message ids", () => {
+    it("uses an explicit reply target when the inbound message replied in-thread", async () => {
+      const { sendMessageBlueBubbles } = await import("./send.js");
+      vi.mocked(sendMessageBlueBubbles).mockClear();
+
+      mockDispatchReplyWithBufferedBlockDispatcher.mockImplementationOnce(async (params) => {
+        await params.dispatcherOptions.deliver(
+          { text: "replying now", replyToId: "msg-thread-root-123" },
+          { kind: "final" },
+        );
+        return EMPTY_DISPATCH_RESULT;
+      });
+
+      setupWebhookTarget();
+
+      const payload = createTimestampedNewMessagePayloadForTest({
+        chatGuid: "iMessage;-;+15551234567",
+      });
+
+      await dispatchWebhookPayload(payload);
+
+      expect(sendMessageBlueBubbles).toHaveBeenCalledWith(
+        expect.any(String),
+        "replying now",
+        expect.objectContaining({ replyToMessageGuid: "msg-thread-root-123" }),
+      );
+    });
+
     it("enqueues system event for outbound message id", async () => {
       mockEnqueueSystemEvent.mockClear();
 

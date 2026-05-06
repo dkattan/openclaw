@@ -1,9 +1,10 @@
 import { escapeRegExp } from "../../utils.js";
-import type { NoticeLevel, ReasoningLevel, TraceLevel } from "../thinking.js";
+import type { NoticeLevel, ProgressMode, ReasoningLevel, TraceLevel } from "../thinking.js";
 import {
   type ElevatedLevel,
   normalizeFastMode,
   normalizeElevatedLevel,
+  normalizeProgressMode,
   normalizeReasoningLevel,
   normalizeTraceLevel,
   normalizeThinkLevel,
@@ -161,6 +162,24 @@ export function extractFastDirective(body?: string): {
   };
 }
 
+export function extractProgressDirective(body?: string): {
+  cleaned: string;
+  progressMode?: ProgressMode;
+  rawLevel?: string;
+  hasDirective: boolean;
+} {
+  if (!body) {
+    return { cleaned: "", hasDirective: false };
+  }
+  const extracted = extractLevelDirective(body, ["progress"], normalizeProgressMode);
+  return {
+    cleaned: extracted.cleaned,
+    progressMode: extracted.level,
+    rawLevel: extracted.rawLevel,
+    hasDirective: extracted.hasDirective,
+  };
+}
+
 export function extractElevatedDirective(body?: string): {
   cleaned: string;
   elevatedLevel?: ElevatedLevel;
@@ -197,16 +216,6 @@ export function extractReasoningDirective(body?: string): {
   };
 }
 
-export function extractShowThinkingDirective(body?: string): {
-  cleaned: string;
-  hasDirective: boolean;
-} {
-  if (!body) {
-    return { cleaned: "", hasDirective: false };
-  }
-  return extractSimpleDirective(body, ["showthinking"]);
-}
-
 export function extractStatusDirective(body?: string): {
   cleaned: string;
   hasDirective: boolean;
@@ -217,5 +226,13 @@ export function extractStatusDirective(body?: string): {
   return extractSimpleDirective(body, ["status"]);
 }
 
-export type { ElevatedLevel, NoticeLevel, ReasoningLevel, ThinkLevel, TraceLevel, VerboseLevel };
+export type {
+  ElevatedLevel,
+  NoticeLevel,
+  ProgressMode,
+  ReasoningLevel,
+  ThinkLevel,
+  TraceLevel,
+  VerboseLevel,
+};
 export { extractExecDirective } from "./exec/directive.js";

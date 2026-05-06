@@ -114,7 +114,7 @@ import { createEmptyPluginRegistry } from "../../plugins/registry-empty.js";
 import { setActivePluginRegistry } from "../../plugins/runtime.js";
 import type { ProviderPlugin } from "../../plugins/types.js";
 import { withEnvAsync } from "../../test-utils/env.js";
-import type { ElevatedLevel } from "../thinking.js";
+import type { ElevatedLevel, ProgressMode } from "../thinking.js";
 import { handleDirectiveOnly } from "./directive-handling.impl.js";
 import {
   maybeHandleModelDirectiveInfo,
@@ -1234,6 +1234,62 @@ describe("handleDirectiveOnly model persist behavior (fixes #1435)", () => {
     );
     expect(disabled?.text).toMatch(/Verbose logging disabled\./);
     expect(sessionEntry.verboseLevel).toBe("off");
+  });
+
+  it("parses and persists progress-mode directives", async () => {
+    expect(parseInlineDirectives("please reply /progress paced")).toEqual(
+      expect.objectContaining({
+        cleaned: "please reply",
+        hasProgressDirective: true,
+        progressMode: "paced",
+        rawProgressMode: "paced",
+      }),
+    );
+
+    const sessionEntry = createSessionEntry();
+    const sessionStore = { [sessionKey]: sessionEntry };
+
+    const pacedReply = await handleDirectiveOnly(
+      createHandleParams({
+        directives: parseInlineDirectives("/progress paced"),
+        sessionEntry,
+        sessionStore,
+      }),
+    );
+    expect(pacedReply?.text).toContain("Progress updates set to paced");
+    expect(sessionEntry.progressMode).toBe("paced");
+
+    const statusReply = await handleDirectiveOnly(
+      createHandleParams({
+        directives: parseInlineDirectives("/progress"),
+        sessionEntry,
+        sessionStore,
+        currentProgressMode: "paced",
+      }),
+    );
+    expect(statusReply?.text).toContain("Current progress mode: paced");
+
+    const nativeReply = await handleDirectiveOnly(
+      createHandleParams({
+        directives: parseInlineDirectives("/progress native"),
+        sessionEntry,
+        sessionStore,
+        currentProgressMode: sessionEntry.progressMode as ProgressMode | undefined,
+      }),
+    );
+    expect(nativeReply?.text).toContain("Progress updates set to native");
+    expect(sessionEntry.progressMode).toBe("native");
+  });
+
+  it("rejects unknown progress modes", async () => {
+    const result = await handleDirectiveOnly(
+      createHandleParams({
+        directives: parseInlineDirectives("/progress sideways"),
+      }),
+    );
+
+    expect(result?.text).toContain('Unrecognized progress mode "sideways".');
+    expect(result?.text).toContain("native, paced");
   });
 
   it("persists and reports fast-mode directives", async () => {

@@ -131,6 +131,7 @@ export function formatReplyTag(message: {
 
 function extractReplyMetadata(message: Record<string, unknown>): {
   replyToId?: string;
+  threadOriginatorId?: string;
   replyToBody?: string;
   replyToSender?: string;
 } {
@@ -187,15 +188,18 @@ function extractReplyMetadata(message: Record<string, unknown>): {
     typeof associatedType === "number" && REACTION_TYPE_MAP.has(associatedType);
 
   const replyToId = directReplyId ?? (!isReactionAssociation ? associatedGuid : undefined);
-  const threadOriginatorGuid = readString(message, "threadOriginatorGuid");
+  const threadOriginatorGuid =
+    readString(message, "threadOriginatorGuid") ?? readString(message, "thread_originator_guid");
   const messageGuid = readString(message, "guid");
-  const fallbackReplyId =
-    !replyToId && threadOriginatorGuid && threadOriginatorGuid !== messageGuid
-      ? threadOriginatorGuid
+  const threadOriginatorId =
+    threadOriginatorGuid && threadOriginatorGuid !== messageGuid
+      ? normalizeOptionalString(threadOriginatorGuid)
       : undefined;
+  const fallbackReplyId = !replyToId ? threadOriginatorId : undefined;
 
   return {
     replyToId: normalizeOptionalString(replyToId ?? fallbackReplyId),
+    threadOriginatorId,
     replyToBody: normalizeOptionalString(replyToBody),
     replyToSender: normalizedSender || undefined,
   };
@@ -501,6 +505,7 @@ export type NormalizedWebhookMessage = {
   isTapback?: boolean;
   participants?: BlueBubblesParticipant[];
   replyToId?: string;
+  threadOriginatorId?: string;
   replyToBody?: string;
   replyToSender?: string;
   /** Webhook event type preserved for dedup key differentiation. */
@@ -810,6 +815,7 @@ export function normalizeWebhookMessage(
     isTapback,
     participants: normalizedParticipants,
     replyToId: replyMetadata.replyToId,
+    threadOriginatorId: replyMetadata.threadOriginatorId,
     replyToBody: replyMetadata.replyToBody,
     replyToSender: replyMetadata.replyToSender,
     eventType: options?.eventType,

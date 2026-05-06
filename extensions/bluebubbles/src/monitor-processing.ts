@@ -858,7 +858,7 @@ async function processMessageAfterDedupe(
       })
     : null;
   let messageShortId: string | undefined;
-  const cacheInboundMessage = () => {
+  const cacheInboundMessage = (rootMessageId?: string) => {
     if (!cacheMessageId) {
       return;
     }
@@ -870,14 +870,31 @@ async function processMessageAfterDedupe(
       chatId: message.chatId,
       senderLabel: message.fromMe ? "me" : message.senderId,
       body: rawBody,
+      ...(rootMessageId ? { rootMessageId } : {}),
       timestamp: message.timestamp ?? Date.now(),
     });
     messageShortId = cacheEntry.shortId;
   };
+  const earlyReplyToId = normalizeOptionalString(
+    isTapbackMessage && tapbackContext?.replyToId ? tapbackContext.replyToId : message.replyToId,
+  );
+  const earlyReplyCache = earlyReplyToId
+    ? resolveReplyContextFromCache({
+        accountId: account.accountId,
+        replyToId: earlyReplyToId,
+        chatGuid: message.chatGuid,
+        chatIdentifier: message.chatIdentifier,
+        chatId: message.chatId,
+      })
+    : null;
+  const derivedReplyRootMessageId =
+    normalizeOptionalString(message.threadOriginatorId) ??
+    normalizeOptionalString(earlyReplyCache?.rootMessageId) ??
+    earlyReplyToId;
 
   if (message.fromMe) {
     // Cache from-me messages so reply context can resolve sender/body.
-    cacheInboundMessage();
+    cacheInboundMessage(derivedReplyRootMessageId);
     const confirmedAssistantOutbound =
       confirmedOutboundCacheEntry?.senderLabel === "me" &&
       normalizeSnippet(confirmedOutboundCacheEntry.body ?? "") === normalizeSnippet(rawBody);
@@ -1192,7 +1209,7 @@ async function processMessageAfterDedupe(
 
   // Cache allowed inbound messages so later replies can resolve sender/body without
   // surfacing dropped content (allowlist/mention/command gating).
-  cacheInboundMessage();
+  cacheInboundMessage(derivedReplyRootMessageId);
 
   const maxBytes =
     account.config.mediaMaxMb && account.config.mediaMaxMb > 0
@@ -1255,6 +1272,7 @@ async function processMessageAfterDedupe(
   let replyToBody = message.replyToBody;
   let replyToSender = message.replyToSender;
   let replyToShortId: string | undefined;
+  let replyToRootMessageId = derivedReplyRootMessageId;
 
   if (isTapbackMessage && tapbackContext?.replyToId) {
     replyToId = tapbackContext.replyToId;
@@ -1274,6 +1292,9 @@ async function processMessageAfterDedupe(
       }
       if (!replyToSender && cached.senderLabel) {
         replyToSender = cached.senderLabel;
+      }
+      if (!replyToRootMessageId && cached.rootMessageId) {
+        replyToRootMessageId = cached.rootMessageId;
       }
       replyToShortId = cached.shortId;
       if (core.logging.shouldLogVerbose()) {
@@ -1328,6 +1349,10 @@ async function processMessageAfterDedupe(
         );
       }
     }
+  }
+
+  if (!replyToRootMessageId && replyToId) {
+    replyToRootMessageId = replyToId;
   }
 
   // If no cached short ID, try to get one from the UUID directly
@@ -1508,7 +1533,11 @@ async function processMessageAfterDedupe(
       ? formatBlueBubblesChatTarget({ chatGuid: chatGuidForActions })
       : message.senderId;
 
-  const maybeEnqueueOutboundMessageId = (messageId?: string, snippet?: string): boolean => {
+  const maybeEnqueueOutboundMessageId = (
+    messageId?: string,
+    snippet?: string,
+    rootMessageId?: string,
+  ): boolean => {
     const trimmed = messageId?.trim();
     if (!trimmed || trimmed === "ok" || trimmed === "unknown") {
       return false;
@@ -1522,6 +1551,7 @@ async function processMessageAfterDedupe(
       chatId,
       senderLabel: "me",
       body: snippet ?? "",
+      ...(rootMessageId ? { rootMessageId } : {}),
       timestamp: Date.now(),
     });
     const displayId = cacheEntry.shortId || trimmed;
@@ -1673,6 +1703,7 @@ async function processMessageAfterDedupe(
     // Use short ID for token savings (agent can use this to reference the message)
     ReplyToId: visibleReplyToShortId || visibleReplyToId,
     ReplyToIdFull: visibleReplyToId,
+    RootMessageId: replyToRootMessageId,
     ReplyToBody: visibleReplyToBody,
     ReplyToSender: visibleReplyToSender,
     GroupSubject: groupSubject,
@@ -1791,9 +1822,7 @@ async function processMessageAfterDedupe(
           delivery: {
             deliver: async (payload, info) => {
               const rawReplyToId =
-                privateApiEnabled && typeof payload.replyToId === "string"
-                  ? payload.replyToId.trim()
-                  : "";
+                typeof payload.replyToId === "string" ? payload.replyToId.trim() : "";
               // Resolve short ID (e.g., "5") to full UUID, scoped to the chat
               // this deliver path is already routing for (cross-chat guard).
               const replyToMessageGuid = rawReplyToId
@@ -1806,6 +1835,17 @@ async function processMessageAfterDedupe(
                     },
                   })
                 : "";
+              const replyRootMessageGuid = replyToMessageGuid
+                ? normalizeOptionalString(
+                    resolveReplyContextFromCache({
+                      accountId: account.accountId,
+                      replyToId: replyToMessageGuid,
+                      chatGuid: chatGuidForActions ?? chatGuid,
+                      chatIdentifier,
+                      chatId,
+                    })?.rootMessageId ?? replyToMessageGuid,
+                  )
+                : undefined;
               const mediaList = resolveOutboundMediaUrls(payload);
               if (mediaList.length > 0) {
                 const tableMode = core.channel.text.resolveMarkdownTableMode({
@@ -1845,7 +1885,13 @@ async function processMessageAfterDedupe(
                       forgetPendingOutboundMessageId(pendingId);
                       throw err;
                     }
-                    if (maybeEnqueueOutboundMessageId(result.messageId, cachedBody)) {
+                    if (
+                      maybeEnqueueOutboundMessageId(
+                        result.messageId,
+                        cachedBody,
+                        replyRootMessageGuid,
+                      )
+                    ) {
                       forgetPendingOutboundMessageId(pendingId);
                     }
                     sentMessage = true;
@@ -1905,7 +1951,7 @@ async function processMessageAfterDedupe(
                   forgetPendingOutboundMessageId(pendingId);
                   throw err;
                 }
-                if (maybeEnqueueOutboundMessageId(result.messageId, chunk)) {
+                if (maybeEnqueueOutboundMessageId(result.messageId, chunk, replyRootMessageGuid)) {
                   forgetPendingOutboundMessageId(pendingId);
                 }
                 sentMessage = true;

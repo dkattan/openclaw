@@ -71,7 +71,6 @@ import {
 } from "../tokens.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import { resolveRunAuthProfile } from "./agent-runner-auth-profile.js";
-import { extractShowThinkingDirective } from "./directives.js";
 import {
   buildEmbeddedRunExecutionParams,
   resolveQueuedReplyRuntimeConfig,
@@ -916,9 +915,6 @@ export async function runAgentTurnWithFallback(params: {
           ...params.followupRun.run,
           config: runtimeConfig,
         };
-  const showThinkingDirective = extractShowThinkingDirective(params.commandBody);
-  const commandBodyForRun = showThinkingDirective.cleaned;
-  const showThinkingRequested = showThinkingDirective.hasDirective;
 
   const runId = params.opts?.runId ?? crypto.randomUUID();
   const replyMediaContext =
@@ -1314,7 +1310,7 @@ export async function runAgentTurnWithFallback(params: {
                   sessionFile: params.followupRun.run.sessionFile,
                   workspaceDir: params.followupRun.run.workspaceDir,
                   config: runtimeConfig,
-                  prompt: commandBodyForRun,
+                  prompt: params.commandBody,
                   transcriptPrompt: params.transcriptCommandBody,
                   inputProvenance: params.followupRun.run.inputProvenance,
                   provider: cliExecutionProvider,
@@ -1497,11 +1493,6 @@ export async function runAgentTurnWithFallback(params: {
                   await params.typingSignals.signalMessageStart();
                   await params.opts?.onAssistantMessageStart?.();
                 },
-                bufferTextOnlyBlockReplies:
-                  !params.blockStreamingEnabled && Boolean(params.opts?.onBlockReply),
-                deliverCommentaryBlockReplies: Boolean(params.opts?.onBlockReply),
-                deliverThinkingBlockReplies:
-                  showThinkingRequested && Boolean(params.opts?.onBlockReply),
                 onReasoningStream:
                   params.typingSignals.shouldStartOnReasoning || params.opts?.onReasoningStream
                     ? async (payload) => {
@@ -2121,7 +2112,7 @@ export async function runAgentTurnWithFallback(params: {
     applyOpenAIGptChatReplyGuard({
       provider: fallbackProvider,
       model: fallbackModel,
-      commandBody: commandBodyForRun,
+      commandBody: params.commandBody,
       isHeartbeat: params.isHeartbeat,
       payloads: runResult.payloads,
     });

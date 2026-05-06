@@ -321,13 +321,9 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
   }) => {
     const { text, addedDuringMessage, chunkerHasBuffered } = args;
 
-    // If text-only block replies are not visible live, collapse any per-message
-    // buffered chunks back to the final assistant text before final payload assembly.
-    const shouldCollapseBufferedAssistantText =
-      Boolean(text) &&
-      (params.bufferTextOnlyBlockReplies === true ||
-        (state.includeReasoning && !params.onBlockReply));
-    if (shouldCollapseBufferedAssistantText) {
+    // If we're not streaming block replies, ensure the final payload includes
+    // the final text even when interim streaming was enabled.
+    if (state.includeReasoning && text && !params.onBlockReply) {
       if (assistantTexts.length > state.assistantTextBaseline) {
         assistantTexts.splice(
           state.assistantTextBaseline,

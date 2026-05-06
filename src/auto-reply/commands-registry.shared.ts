@@ -805,6 +805,23 @@ export function buildBuiltinChatCommands(
       argsMenu: "auto",
     }),
     defineChatCommand({
+      key: "progress",
+      nativeName: "progress",
+      description: "Set progress update mode.",
+      textAlias: "/progress",
+      category: "options",
+      tier: "standard",
+      args: [
+        {
+          name: "mode",
+          description: "native or paced",
+          type: "string",
+          choices: ["native", "paced"],
+        },
+      ],
+      argsMenu: "auto",
+    }),
+    defineChatCommand({
       key: "reasoning",
       nativeName: "reasoning",
       description: "Toggle reasoning visibility.",
