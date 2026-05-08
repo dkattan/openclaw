@@ -824,6 +824,18 @@ function firstRouteReplyCall(): Record<string, unknown> {
   return call as Record<string, unknown>;
 }
 
+function firstBlockReplyPayload(dispatcher: ReplyDispatcher): ReplyPayload | undefined {
+  return (dispatcher.sendBlockReply as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
+    | ReplyPayload
+    | undefined;
+}
+
+function firstFinalReplyPayload(dispatcher: ReplyDispatcher): ReplyPayload | undefined {
+  return (dispatcher.sendFinalReply as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
+    | ReplyPayload
+    | undefined;
+}
+
 function requireToolResultHandler(
   handler: GetReplyOptions["onToolResult"] | undefined,
 ): NonNullable<GetReplyOptions["onToolResult"]> {
@@ -2699,6 +2711,57 @@ describe("dispatchReplyFromConfig", () => {
 
     expect(dispatcher.sendToolResult).not.toHaveBeenCalled();
     expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({ text: "done" });
+  });
+
+  it("applies root-thread reply targets to tool, block, and final deliveries", async () => {
+    setNoAbort();
+    sessionStoreMocks.currentEntry = {
+      verboseLevel: "on",
+    };
+    const cfg = emptyConfig;
+    const dispatcher = createDispatcher();
+    const ctx = buildTestCtx({
+      Provider: "bluebubbles",
+      Surface: "bluebubbles",
+      ChatType: "direct",
+      SessionKey: "agent:main:bluebubbles:direct:+15550001111",
+      RootMessageId: "thread-root-1",
+      ReplyToIdFull: "reply-msg-1",
+      MessageSidFull: "current-msg-1",
+    });
+
+    const replyResolver = async (_ctx: MsgContext, opts?: GetReplyOptions) => {
+      await requireToolResultHandler(opts?.onToolResult)({
+        text: "tool error",
+        isError: true,
+      } satisfies ReplyPayload);
+      await requireBlockReplyHandler(opts?.onBlockReply)({
+        text: "partial reply",
+      } satisfies ReplyPayload);
+      return { text: "done" } satisfies ReplyPayload;
+    };
+
+    await dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
+
+    expect(firstToolResultPayload(dispatcher)).toEqual(
+      expect.objectContaining({
+        text: "tool error",
+        isError: true,
+        replyToId: "thread-root-1",
+      }),
+    );
+    expect(firstBlockReplyPayload(dispatcher)).toEqual(
+      expect.objectContaining({
+        text: "partial reply",
+        replyToId: "thread-root-1",
+      }),
+    );
+    expect(firstFinalReplyPayload(dispatcher)).toEqual(
+      expect.objectContaining({
+        text: "done",
+        replyToId: "thread-root-1",
+      }),
+    );
   });
 
   it("refreshes verbose progress with session entry snapshots", async () => {
@@ -5880,7 +5943,12 @@ describe("dispatchReplyFromConfig", () => {
       replyResolver,
     });
 
-    expect(firstDispatcher.sendBlockReply).toHaveBeenCalledWith({ text: "partial answer" });
+    expect(firstDispatcher.sendBlockReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "partial answer",
+        replyToId: "msg-dup-block-error",
+      }),
+    );
     expect(replyResolver).toHaveBeenCalledTimes(1);
   });
 

@@ -137,6 +137,7 @@ import { replyRunRegistry, type ReplyOperation } from "./reply-run-registry.js";
 import { isReplyProfilerEnabled } from "./reply-timing-tracker.js";
 import { admitReplyTurn, resolveReplyTurnKind } from "./reply-turn-admission.js";
 import { resolveRoutedDeliveryThreadId } from "./routed-delivery-thread.js";
+import { applyResolvedReplyTarget } from "./reply-payloads.js";
 import { resolveReplyRoutingDecision } from "./routing-policy.js";
 import {
   isExplicitSourceReplyCommand,
@@ -1710,6 +1711,21 @@ export async function dispatchReplyFromConfig(
     typeof ctx.Timestamp === "number" && Number.isFinite(ctx.Timestamp) ? ctx.Timestamp : undefined;
   const messageIdForHook =
     ctx.MessageSidFull ?? ctx.MessageSid ?? ctx.MessageSidFirst ?? ctx.MessageSidLast;
+  const currentMessageIdValue = (ctx as { CurrentMessageId?: unknown }).CurrentMessageId;
+  const currentMessageId =
+    typeof currentMessageIdValue === "number"
+      ? String(currentMessageIdValue)
+      : normalizeOptionalString(currentMessageIdValue);
+  const applyDispatchReplyTarget = (payload: ReplyPayload): ReplyPayload =>
+    applyResolvedReplyTarget({
+      payload,
+      rootMessageId: ctx.RootMessageId,
+      replyToId: ctx.ReplyToId,
+      replyToIdFull: ctx.ReplyToIdFull,
+      messageId: ctx.MessageSid ?? ctx.MessageSidFirst ?? ctx.MessageSidLast,
+      messageIdFull: ctx.MessageSidFull,
+      currentMessageId,
+    });
   const hookContext = deriveInboundMessageHookContext(ctx, { messageId: messageIdForHook });
   const { isGroup, groupId } = hookContext;
   const inboundClaimContext = toPluginInboundClaimContext(hookContext);
@@ -2245,9 +2261,9 @@ export async function dispatchReplyFromConfig(
       let queuedFinal = false;
       let routedFinalCount = 0;
       if (!suppressDelivery) {
-        const payload = {
+        const payload = applyDispatchReplyTarget({
           text: formatAbortReplyTextResolver(fastAbort.stoppedSubagents),
-        } satisfies ReplyPayload;
+        } satisfies ReplyPayload);
         const result = await routeReplyToOriginating(payload);
         if (result) {
           queuedFinal = result.ok;
@@ -2378,8 +2394,8 @@ export async function dispatchReplyFromConfig(
       normalizeOptionalString(ctx.RootMessageId) ??
       normalizeOptionalString(ctx.ReplyToIdFull) ??
       normalizeOptionalString(ctx.ReplyToId) ??
-      normalizeOptionalString(ctx.MessageSidFull) ??
-      normalizeOptionalString(ctx.MessageSid);
+      normalizeOptionalString(messageIdForHook) ??
+      currentMessageId;
     const progressDispatchStartedAt = Date.now();
     let pacedProgressDisabledNoticeSent = false;
     let nativeVisibleProgressDelivered = false;
@@ -2449,8 +2465,9 @@ export async function dispatchReplyFromConfig(
       });
       throwIfFinalDeliveryAborted();
       const normalizedPayload = await normalizeReplyMediaPayload(ttsPayload);
+      const threadedPayload = applyDispatchReplyTarget(normalizedPayload);
       throwIfFinalDeliveryAborted();
-      const result = await routeReplyToOriginating(normalizedPayload, {
+      const result = await routeReplyToOriginating(threadedPayload, {
         abortSignal,
         kind: "final",
       });
@@ -2461,7 +2478,7 @@ export async function dispatchReplyFromConfig(
           );
         }
         if (isRoutedReplyDelivered(result)) {
-          if (resolveSendableOutboundReplyParts(normalizedPayload).hasContent) {
+          if (resolveSendableOutboundReplyParts(threadedPayload).hasContent) {
             nativeVisibleProgressDelivered = true;
             clearPacedProgressDisabledNoticeTimer();
             progressReporter?.noteVisibleDelivery();
@@ -2484,8 +2501,14 @@ export async function dispatchReplyFromConfig(
         dispatcher,
         metadata: sourceReplyTranscriptMirror,
       });
-      const queuedFinal = dispatcher.sendFinalReply(normalizedPayload);
+      const queuedFinal = dispatcher.sendFinalReply(threadedPayload);
       if (queuedFinal) {
+        if (resolveSendableOutboundReplyParts(threadedPayload).hasContent) {
+          nativeVisibleProgressDelivered = true;
+          clearPacedProgressDisabledNoticeTimer();
+          progressReporter?.noteVisibleDelivery();
+          logProgressEvent("visible_delivery", { source: "final" });
+        }
         await mirrorInternalSourceReplyAfterDispatcherDelivery({
           dispatcher,
           before: finalOutcomeBefore,
@@ -3087,34 +3110,35 @@ export async function dispatchReplyFromConfig(
                 if (!deliveryPayload) {
                   return;
                 }
+                const threadedPayload = applyDispatchReplyTarget(deliveryPayload);
                 if (isDispatchOperationAborted()) {
                   return;
                 }
-                if (shouldSuppressLateTextOnlyToolProgress(deliveryPayload)) {
+                if (shouldSuppressLateTextOnlyToolProgress(threadedPayload)) {
                   return;
                 }
-                if (shouldSuppressMessageToolOnlyTextErrorProgress(deliveryPayload)) {
+                if (shouldSuppressMessageToolOnlyTextErrorProgress(threadedPayload)) {
                   return;
-                }
-                if (resolveSendableOutboundReplyParts(deliveryPayload).hasContent) {
-                  await maybeSendPacedProgressDisabledNotice("tool_result");
                 }
                 if (shouldSuppressDefaultToolProgressMessages()) {
-                  const hasMedia = resolveSendableOutboundReplyParts(deliveryPayload).hasMedia;
-                  if (!hasMedia && !hasExecApprovalPayload(deliveryPayload)) {
+                  const hasMedia = resolveSendableOutboundReplyParts(threadedPayload).hasMedia;
+                  if (!hasMedia && !hasExecApprovalPayload(threadedPayload)) {
                     return;
                   }
                 }
-                if (deliveryPayload.isError === true) {
+                if (threadedPayload.isError === true) {
                   markVisibleToolErrorProgress();
                 }
+                if (resolveSendableOutboundReplyParts(threadedPayload).hasContent) {
+                  await maybeSendPacedProgressDisabledNotice("tool_result");
+                }
                 if (shouldRouteToOriginating) {
-                  await sendPayloadAsync(deliveryPayload, undefined, false);
+                  await sendPayloadAsync(threadedPayload, undefined, false);
                 } else {
                   markInboundDedupeReplayUnsafe();
-                  dispatcher.sendToolResult(deliveryPayload);
+                  dispatcher.sendToolResult(threadedPayload);
                 }
-                noteVisibleProgressDelivery("tool_result", deliveryPayload);
+                noteVisibleProgressDelivery("tool_result", threadedPayload);
               };
               return run();
             },
@@ -3284,19 +3308,20 @@ export async function dispatchReplyFromConfig(
                   accountId: replyRoute.accountId,
                 });
                 const normalizedPayload = await normalizeReplyMediaPayload(ttsPayload);
+                const threadedPayload = applyDispatchReplyTarget(normalizedPayload);
                 if (isDispatchOperationAborted()) {
                   return;
                 }
                 await maybeSendPacedProgressDisabledNotice("block");
                 if (shouldRouteToOriginating) {
-                  await sendPayloadAsync(normalizedPayload, context?.abortSignal, false, "block");
-                  noteVisibleProgressDelivery("block", normalizedPayload);
+                  await sendPayloadAsync(threadedPayload, context?.abortSignal, false, "block");
+                  noteVisibleProgressDelivery("block", threadedPayload);
                 } else {
                   markInboundDedupeReplayUnsafe();
-                  const delivered = dispatcher.sendBlockReply(normalizedPayload);
+                  const delivered = dispatcher.sendBlockReply(threadedPayload);
                   if (delivered) {
                     hasPendingDirectBlockReplyDelivery = true;
-                    noteVisibleProgressDelivery("block", normalizedPayload);
+                    noteVisibleProgressDelivery("block", threadedPayload);
                   }
                 }
               };
@@ -3463,8 +3488,10 @@ export async function dispatchReplyFromConfig(
               { visibleTextAlreadyDelivered: true },
             );
             const normalizedTtsOnlyPayload = await normalizeReplyMediaPayload(ttsOnlyPayload);
+            const threadedPayload = applyDispatchReplyTarget(normalizedTtsOnlyPayload);
             throwIfDispatchOperationAborted();
-            const result = await routeReplyToOriginating(normalizedTtsOnlyPayload, {
+            await maybeSendPacedProgressDisabledNotice("tts_only_final");
+            const result = await routeReplyToOriginating(threadedPayload, {
               abortSignal: getDispatchAbortSignal(),
               kind: "final",
             });
@@ -3481,7 +3508,7 @@ export async function dispatchReplyFromConfig(
             } else {
               throwIfDispatchOperationAborted();
               markInboundDedupeReplayUnsafe();
-              const didQueue = dispatcher.sendFinalReply(normalizedTtsOnlyPayload);
+              const didQueue = dispatcher.sendFinalReply(threadedPayload);
               queuedFinal = didQueue || queuedFinal;
             }
           }
