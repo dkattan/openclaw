@@ -215,6 +215,17 @@ export async function handleDirectiveOnly(
       text: `Unrecognized fast mode "${directives.rawFastMode}". Valid levels: status, on, off, default.`,
     };
   }
+  if (directives.hasProgressDirective && !directives.progressMode) {
+    if (!directives.rawProgressMode) {
+      const level = (sessionEntry.progressMode as "native" | "paced" | undefined) ?? "native";
+      return {
+        text: withOptions(`Current progress mode: ${level}.`, "native, paced"),
+      };
+    }
+    return {
+      text: `Unrecognized progress mode "${directives.rawProgressMode}". Valid levels: native, paced.`,
+    };
+  }
   if (directives.hasReasoningDirective && !directives.reasoningLevel) {
     if (!directives.rawReasoningLevel) {
       const level = currentReasoningLevel ?? "off";
@@ -363,6 +374,7 @@ export async function handleDirectiveOnly(
       (Boolean(directives.thinkLevel) || directives.clearThinkLevel)) ||
     (directives.hasFastDirective &&
       (directives.fastMode !== undefined || directives.clearFastMode)) ||
+    (directives.hasProgressDirective && Boolean(directives.progressMode)) ||
     (directives.hasVerboseDirective &&
       Boolean(directives.verboseLevel) &&
       allowInternalVerbosePersistence) ||
@@ -394,6 +406,9 @@ export async function handleDirectiveOnly(
       delete sessionEntry.fastMode;
     } else if (directives.hasFastDirective && directives.fastMode !== undefined) {
       sessionEntry.fastMode = directives.fastMode;
+    }
+    if (directives.hasProgressDirective && directives.progressMode) {
+      sessionEntry.progressMode = directives.progressMode;
     }
     if (shouldRemapUnsupportedThinkLevel && remappedUnsupportedThinkLevel) {
       sessionEntry.thinkingLevel = remappedUnsupportedThinkLevel;
@@ -540,6 +555,9 @@ export async function handleDirectiveOnly(
         ? formatDirectiveAck("Fast mode enabled.")
         : formatDirectiveAck("Fast mode disabled."),
     );
+  }
+  if (directives.hasProgressDirective && directives.progressMode) {
+    parts.push(formatDirectiveAck(`Progress mode set to ${directives.progressMode}.`));
   }
   if (directives.hasVerboseDirective && directives.verboseLevel) {
     parts.push(

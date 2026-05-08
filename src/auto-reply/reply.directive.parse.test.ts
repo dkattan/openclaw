@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseInlineDirectives } from "./reply/directive-handling.parse.js";
 import {
   extractElevatedDirective,
+  extractProgressDirective,
   extractReasoningDirective,
   extractTraceDirective,
   extractThinkDirective,
@@ -83,6 +84,11 @@ describe("directive parsing", () => {
     expect(fast.clearFastMode).toBe(true);
   });
 
+  it("matches progress directive", () => {
+    const res = extractProgressDirective("/progress paced please");
+    expect(res.hasDirective).toBe(true);
+    expect(res.progressMode).toBe("paced");
+  });
   it("matches elevated with leading space", () => {
     const res = extractElevatedDirective(" please /elevated on now");
     expect(res.hasDirective).toBe(true);
@@ -210,6 +216,12 @@ describe("directive parsing", () => {
     expect(think.cleaned).toBe("please sync now");
     expect(think.hasThinkDirective).toBe(true);
     expect(think.thinkLevel).toBe("high");
+
+    expect(parseInlineDirectives("please sync /progress paced now")).toMatchObject({
+      cleaned: "please sync now",
+      hasProgressDirective: true,
+      progressMode: "paced",
+    });
   });
 
   it("preserves spacing when stripping think directives before paths", () => {
