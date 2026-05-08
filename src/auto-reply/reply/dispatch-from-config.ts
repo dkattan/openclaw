@@ -120,6 +120,7 @@ import { resolveOriginMessageProvider } from "./origin-routing.js";
 import { resolveRoutedDeliveryThreadId } from "./routed-delivery-thread.js";
 import { trimFinalReplyAgainstProgress } from "./progress-summary-final.js";
 import { createProgressSummaryReporter } from "./progress-summary-reporter.js";
+import { applyResolvedReplyTarget } from "./reply-payloads.js";
 import { resolveReplyRoutingDecision } from "./routing-policy.js";
 import {
   isExplicitSourceReplyCommand,
@@ -1156,6 +1157,21 @@ export async function dispatchReplyFromConfig(
     typeof ctx.Timestamp === "number" && Number.isFinite(ctx.Timestamp) ? ctx.Timestamp : undefined;
   const messageIdForHook =
     ctx.MessageSidFull ?? ctx.MessageSid ?? ctx.MessageSidFirst ?? ctx.MessageSidLast;
+  const currentMessageIdValue = (ctx as { CurrentMessageId?: unknown }).CurrentMessageId;
+  const currentMessageId =
+    typeof currentMessageIdValue === "number"
+      ? String(currentMessageIdValue)
+      : normalizeOptionalString(currentMessageIdValue);
+  const applyDispatchReplyTarget = (payload: ReplyPayload): ReplyPayload =>
+    applyResolvedReplyTarget({
+      payload,
+      rootMessageId: ctx.RootMessageId,
+      replyToId: ctx.ReplyToId,
+      replyToIdFull: ctx.ReplyToIdFull,
+      messageId: ctx.MessageSid ?? ctx.MessageSidFirst ?? ctx.MessageSidLast,
+      messageIdFull: ctx.MessageSidFull,
+      currentMessageId,
+    });
   const hookContext = deriveInboundMessageHookContext(ctx, { messageId: messageIdForHook });
   const { isGroup, groupId } = hookContext;
   const inboundClaimContext = toPluginInboundClaimContext(hookContext);
@@ -1624,9 +1640,9 @@ export async function dispatchReplyFromConfig(
       let queuedFinal = false;
       let routedFinalCount = 0;
       if (!suppressDelivery) {
-        const payload = {
+        const payload = applyDispatchReplyTarget({
           text: formatAbortReplyTextResolver(fastAbort.stoppedSubagents),
-        } satisfies ReplyPayload;
+        } satisfies ReplyPayload);
         const result = await routeReplyToOriginating(payload);
         if (result) {
           queuedFinal = result.ok;
@@ -1725,8 +1741,8 @@ export async function dispatchReplyFromConfig(
       normalizeOptionalString(ctx.RootMessageId) ??
       normalizeOptionalString(ctx.ReplyToIdFull) ??
       normalizeOptionalString(ctx.ReplyToId) ??
-      normalizeOptionalString(ctx.MessageSidFull) ??
-      normalizeOptionalString(ctx.MessageSid);
+      normalizeOptionalString(messageIdForHook) ??
+      currentMessageId;
     const progressDispatchStartedAt = Date.now();
     let pacedProgressDisabledNoticeSent = false;
     let nativeVisibleProgressDelivered = false;
@@ -1808,7 +1824,8 @@ export async function dispatchReplyFromConfig(
         accountId: replyRoute.accountId,
       });
       const normalizedPayload = await normalizeReplyMediaPayload(ttsPayload);
-      const result = await routeReplyToOriginating(normalizedPayload);
+      const threadedPayload = applyDispatchReplyTarget(normalizedPayload);
+      const result = await routeReplyToOriginating(threadedPayload);
       if (result) {
         if (!result.ok) {
           logVerbose(
@@ -1816,7 +1833,7 @@ export async function dispatchReplyFromConfig(
           );
         }
         if (result.ok) {
-          if (resolveSendableOutboundReplyParts(normalizedPayload).hasContent) {
+          if (resolveSendableOutboundReplyParts(threadedPayload).hasContent) {
             progressReporter?.noteVisibleDelivery();
             logProgressEvent("visible_delivery", { source: "final" });
           }
@@ -1831,9 +1848,9 @@ export async function dispatchReplyFromConfig(
         };
       }
       markInboundDedupeReplayUnsafe();
-      const queuedFinal = dispatcher.sendFinalReply(normalizedPayload);
+      const queuedFinal = dispatcher.sendFinalReply(threadedPayload);
       if (queuedFinal) {
-        if (resolveSendableOutboundReplyParts(normalizedPayload).hasContent) {
+        if (resolveSendableOutboundReplyParts(threadedPayload).hasContent) {
           progressReporter?.noteVisibleDelivery();
           logProgressEvent("visible_delivery", { source: "final" });
         }
@@ -2315,30 +2332,31 @@ export async function dispatchReplyFromConfig(
               if (!deliveryPayload) {
                 return;
               }
-              if (resolveSendableOutboundReplyParts(deliveryPayload).hasContent) {
+              const threadedPayload = applyDispatchReplyTarget(deliveryPayload);
+              if (resolveSendableOutboundReplyParts(threadedPayload).hasContent) {
                 await maybeSendPacedProgressDisabledNotice("tool_result");
               }
               if (shouldSuppressDefaultToolProgressMessages()) {
-                const hasMedia = resolveSendableOutboundReplyParts(deliveryPayload).hasMedia;
+                const hasMedia = resolveSendableOutboundReplyParts(threadedPayload).hasMedia;
                 const execApproval =
-                  deliveryPayload.channelData &&
-                  typeof deliveryPayload.channelData === "object" &&
-                  !Array.isArray(deliveryPayload.channelData)
-                    ? deliveryPayload.channelData.execApproval
+                  threadedPayload.channelData &&
+                  typeof threadedPayload.channelData === "object" &&
+                  !Array.isArray(threadedPayload.channelData)
+                    ? threadedPayload.channelData.execApproval
                     : undefined;
                 const hasExecApproval =
                   execApproval && typeof execApproval === "object" && !Array.isArray(execApproval);
-                if (!hasMedia && !hasExecApproval && deliveryPayload.isError !== true) {
+                if (!hasMedia && !hasExecApproval && threadedPayload.isError !== true) {
                   return;
                 }
               }
               if (shouldRouteToOriginating) {
-                await sendPayloadAsync(deliveryPayload, undefined, false);
+                await sendPayloadAsync(threadedPayload, undefined, false);
               } else {
                 markInboundDedupeReplayUnsafe();
-                dispatcher.sendToolResult(deliveryPayload);
+                dispatcher.sendToolResult(threadedPayload);
               }
-              noteVisibleProgressDelivery("tool_result", deliveryPayload);
+              noteVisibleProgressDelivery("tool_result", threadedPayload);
             };
             return run();
           },
@@ -2457,14 +2475,15 @@ export async function dispatchReplyFromConfig(
                 accountId: replyRoute.accountId,
               });
               const normalizedPayload = await normalizeReplyMediaPayload(ttsPayload);
+              const threadedPayload = applyDispatchReplyTarget(normalizedPayload);
               await maybeSendPacedProgressDisabledNotice("block");
               if (shouldRouteToOriginating) {
-                await sendPayloadAsync(normalizedPayload, context?.abortSignal, false);
+                await sendPayloadAsync(threadedPayload, context?.abortSignal, false);
               } else {
                 markInboundDedupeReplayUnsafe();
-                dispatcher.sendBlockReply(normalizedPayload);
+                dispatcher.sendBlockReply(threadedPayload);
               }
-              noteVisibleProgressDelivery("block", normalizedPayload);
+              noteVisibleProgressDelivery("block", threadedPayload);
             };
             return run();
           },
@@ -2609,7 +2628,9 @@ export async function dispatchReplyFromConfig(
               { visibleTextAlreadyDelivered: true },
             );
             const normalizedTtsOnlyPayload = await normalizeReplyMediaPayload(ttsOnlyPayload);
-            const result = await routeReplyToOriginating(normalizedTtsOnlyPayload);
+            const threadedPayload = applyDispatchReplyTarget(normalizedTtsOnlyPayload);
+            await maybeSendPacedProgressDisabledNotice("tts_only_final");
+            const result = await routeReplyToOriginating(threadedPayload);
             if (result) {
               queuedFinal = result.ok || queuedFinal;
               if (result.ok) {
@@ -2622,7 +2643,7 @@ export async function dispatchReplyFromConfig(
               }
             } else {
               markInboundDedupeReplayUnsafe();
-              const didQueue = dispatcher.sendFinalReply(normalizedTtsOnlyPayload);
+              const didQueue = dispatcher.sendFinalReply(threadedPayload);
               queuedFinal = didQueue || queuedFinal;
             }
           }

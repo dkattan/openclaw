@@ -218,6 +218,47 @@ describe("createAcpDispatchDeliveryCoordinator", () => {
     expect(coordinator.getRoutedCounts().final).toBe(0);
   });
 
+  it("threads ACP tool, block, and final deliveries to the root message id", async () => {
+    const dispatcher = createDispatcher();
+    const coordinator = createAcpDispatchDeliveryCoordinator({
+      cfg: createAcpTestConfig(),
+      ctx: buildTestCtx({
+        Provider: "visiblechat",
+        Surface: "visiblechat",
+        SessionKey: "agent:codex-acp:session-1",
+        RootMessageId: "thread-root-1",
+        ReplyToIdFull: "reply-msg-1",
+        MessageSidFull: "current-msg-1",
+      }),
+      dispatcher,
+      inboundAudio: false,
+      shouldRouteToOriginating: false,
+    });
+
+    await coordinator.deliver("tool", { text: "tool update" }, { skipTts: true });
+    await coordinator.deliver("block", { text: "block update" }, { skipTts: true });
+    await coordinator.deliver("final", { text: "done" }, { skipTts: true });
+
+    expect(dispatcher.sendToolResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "tool update",
+        replyToId: "thread-root-1",
+      }),
+    );
+    expect(dispatcher.sendBlockReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "block update",
+        replyToId: "thread-root-1",
+      }),
+    );
+    expect(dispatcher.sendFinalReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "done",
+        replyToId: "thread-root-1",
+      }),
+    );
+  });
+
   it("tracks visible direct block text for dispatcher-backed delivery", async () => {
     const coordinator = createAcpDispatchDeliveryCoordinator({
       cfg: createAcpTestConfig(),

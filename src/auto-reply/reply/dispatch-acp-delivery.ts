@@ -13,6 +13,7 @@ import { resolveStatusTtsSnapshot } from "../../tts/status-config.js";
 import { resolveConfiguredTtsMode, shouldCleanTtsDirectiveText } from "../../tts/tts-config.js";
 import type { FinalizedMsgContext } from "../templating.js";
 import type { ReplyPayload } from "../types.js";
+import { applyResolvedReplyTarget } from "./reply-payloads.js";
 import type { ReplyDispatchKind, ReplyDispatcher } from "./reply-dispatcher.types.js";
 import { resolveRoutedDeliveryThreadId } from "./routed-delivery-thread.js";
 
@@ -203,6 +204,21 @@ export function createAcpDispatchDeliveryCoordinator(params: {
         params.cfg.channels as Record<string, { defaultAccount?: unknown } | undefined> | undefined
       )?.[routedChannel ?? directChannel ?? ""]?.defaultAccount,
     );
+  const currentMessageIdValue = (params.ctx as { CurrentMessageId?: unknown }).CurrentMessageId;
+  const currentMessageId =
+    typeof currentMessageIdValue === "number"
+      ? String(currentMessageIdValue)
+      : normalizeOptionalString(currentMessageIdValue);
+  const applyDeliveryReplyTarget = (payload: ReplyPayload): ReplyPayload =>
+    applyResolvedReplyTarget({
+      payload,
+      rootMessageId: params.ctx.RootMessageId,
+      replyToId: params.ctx.ReplyToId,
+      replyToIdFull: params.ctx.ReplyToIdFull,
+      messageId: params.ctx.MessageSid ?? params.ctx.MessageSidFirst ?? params.ctx.MessageSidLast,
+      messageIdFull: params.ctx.MessageSidFull,
+      currentMessageId,
+    });
   const state: AcpDispatchDeliveryState = {
     startedReplyLifecycle: false,
     accumulatedBlockText: "",
@@ -371,11 +387,12 @@ export function createAcpDispatchDeliveryCoordinator(params: {
       ttsAuto: params.sessionTtsAuto,
       skipTts: meta?.skipTts,
     });
+    const threadedPayload = applyDeliveryReplyTarget(ttsPayload);
 
     if (params.shouldRouteToOriginating && params.originatingChannel && params.originatingTo) {
       const toolCallId = normalizeOptionalString(meta?.toolCallId);
       if (kind === "tool" && meta?.allowEdit === true && toolCallId) {
-        const edited = await tryEditToolMessage(ttsPayload, toolCallId);
+        const edited = await tryEditToolMessage(threadedPayload, toolCallId);
         if (edited) {
           return true;
         }
@@ -384,7 +401,7 @@ export function createAcpDispatchDeliveryCoordinator(params: {
       const tracksVisibleText = await shouldTreatDeliveredTextAsVisible({
         channel: routedChannel,
         kind,
-        text: ttsPayload.text,
+        text: threadedPayload.text,
         routed: true,
       });
       const { routeReply } = await loadRouteReplyRuntime();
@@ -393,7 +410,7 @@ export function createAcpDispatchDeliveryCoordinator(params: {
         sessionKey: deliverySessionKey,
       });
       const result = await routeReply({
-        payload: ttsPayload,
+        payload: threadedPayload,
         channel: params.originatingChannel,
         to: params.originatingTo,
         sessionKey: deliverySessionKey,
@@ -440,15 +457,15 @@ export function createAcpDispatchDeliveryCoordinator(params: {
     const tracksVisibleText = await shouldTreatDeliveredTextAsVisible({
       channel: directChannel,
       kind,
-      text: ttsPayload.text,
+      text: threadedPayload.text,
       routed: false,
     });
     const delivered =
       kind === "tool"
-        ? params.dispatcher.sendToolResult(ttsPayload)
+        ? params.dispatcher.sendToolResult(threadedPayload)
         : kind === "block"
-          ? params.dispatcher.sendBlockReply(ttsPayload)
-          : params.dispatcher.sendFinalReply(ttsPayload);
+          ? params.dispatcher.sendBlockReply(threadedPayload)
+          : params.dispatcher.sendFinalReply(threadedPayload);
     if (kind === "final" && delivered) {
       state.deliveredFinalReply = true;
     }
