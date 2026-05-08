@@ -17,6 +17,7 @@ export type ThinkLevel =
   | "max";
 export type VerboseLevel = "off" | "on" | "full";
 export type TraceLevel = "off" | "on" | "raw";
+export type ProgressMode = "native" | "paced";
 export type NoticeLevel = "off" | "on" | "full";
 export type ElevatedLevel = "off" | "on" | "ask" | "full";
 export type ElevatedMode = "off" | "ask" | "full";
@@ -146,6 +147,20 @@ export function normalizeTraceLevel(raw?: string | null): TraceLevel | undefined
   }
   if (["raw", "unfiltered"].includes(key)) {
     return "raw";
+  }
+  return undefined;
+}
+
+export function normalizeProgressMode(raw?: string | null): ProgressMode | undefined {
+  if (!raw) {
+    return undefined;
+  }
+  const key = normalizeLowercaseStringOrEmpty(raw);
+  if (["native", "default", "live"].includes(key)) {
+    return "native";
+  }
+  if (["paced", "pacing"].includes(key)) {
+    return "paced";
   }
   return undefined;
 }

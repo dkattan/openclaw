@@ -281,6 +281,7 @@ export type SessionEntry = {
   chatType?: SessionChatType;
   thinkingLevel?: string;
   fastMode?: boolean;
+  progressMode?: "native" | "paced";
   verboseLevel?: string;
   traceLevel?: string;
   reasoningLevel?: string;

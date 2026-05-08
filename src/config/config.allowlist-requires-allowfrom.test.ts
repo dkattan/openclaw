@@ -159,3 +159,18 @@ describe("Discord mentionAliases schema", () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe("BlueBubbles threadReplies schema", () => {
+  it("accepts threadReplies at channel and account scope", () => {
+    const result = BlueBubblesConfigSchema.safeParse({
+      threadReplies: "inbound",
+      accounts: {
+        work: {
+          threadReplies: "always",
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+  });
+});
