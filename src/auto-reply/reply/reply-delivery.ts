@@ -133,7 +133,7 @@ export function createBlockReplyDeliveryHandler(params: {
         : normalized.payload;
     } catch (err) {
       if (err instanceof ReplyMediaNormalizationError) {
-        const failurePayload = carryReplyPayloadMetadata(
+        const failurePayload = copyReplyPayloadMetadata(
           payload,
           params.applyReplyToMode(
             buildReplyMediaNormalizationFailurePayload(normalized.payload, err),
