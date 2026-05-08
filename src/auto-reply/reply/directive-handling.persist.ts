@@ -178,6 +178,10 @@ export async function persistInlineDirectives(params: {
         updated = true;
       }
     }
+    if (directives.hasProgressDirective && directives.progressMode) {
+      sessionEntry.progressMode = directives.progressMode;
+      updated = true;
+    }
     if (
       directives.hasVerboseDirective &&
       directives.verboseLevel &&
