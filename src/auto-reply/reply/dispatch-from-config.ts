@@ -489,6 +489,12 @@ const createResolveProgressMode = (params: {
   };
 };
 
+function formatPacedProgressDisabledText(mode: ProgressMode): string {
+  return `Paced progress updates are not enabled in this thread right now (current progress mode: ${mode}). Run /progress paced here to enable regular updates.`;
+}
+
+const PACED_PROGRESS_DISABLED_NOTICE_DELAY_MS = 7_000;
+
 function sanitizeProgressFreeformText(text?: string): string {
   const normalized = normalizeOptionalString(text)
     ?.replace(/^(\[Paced Progress\]:\s*)?(Working:|Still working:)\s*/i, "")
@@ -1100,6 +1106,7 @@ export async function dispatchReplyFromConfig(
     ? resolveSessionStoreLookup({ ...ctx, SessionKey: boundAcpDispatchSessionKey }, cfg)
     : initialSessionStoreEntry;
   let progressReporter: ReturnType<typeof createProgressSummaryReporter> | undefined;
+  let pacedProgressDisabledNoticeTimer: ReturnType<typeof setTimeout> | undefined;
   const sessionAgentId = resolveSessionAgentId({ sessionKey: acpDispatchSessionKey, config: cfg });
   const sessionAgentCfg = resolveAgentConfig(cfg, sessionAgentId);
   const shouldEmitVerboseProgress = createShouldEmitVerboseProgress({
@@ -1375,10 +1382,15 @@ export async function dispatchReplyFromConfig(
         })
       : undefined;
   const effectiveVisibleReplies = configuredVisibleReplies ?? harnessDefaultVisibleReplies;
+  const requestedSourceReplyDeliveryMode =
+    params.replyOptions?.sourceReplyDeliveryMode ??
+    (chatType === "direct" && params.replyOptions?.disableBlockStreaming !== undefined
+      ? "automatic"
+      : undefined);
   const prefersMessageToolDelivery =
-    params.replyOptions?.sourceReplyDeliveryMode === "message_tool_only" ||
+    requestedSourceReplyDeliveryMode === "message_tool_only" ||
     ctx.InboundEventKind === "room_event" ||
-    (params.replyOptions?.sourceReplyDeliveryMode === undefined &&
+    (requestedSourceReplyDeliveryMode === undefined &&
       !isExplicitSourceReplyCommand(ctx) &&
       effectiveVisibleReplies === "message_tool");
   const runtimeProfileAlsoAllow = prefersMessageToolDelivery ? ["message"] : [];
@@ -1437,7 +1449,7 @@ export async function dispatchReplyFromConfig(
   const sourceReplyPolicy = resolveSourceReplyVisibilityPolicy({
     cfg,
     ctx,
-    requested: params.replyOptions?.sourceReplyDeliveryMode,
+    requested: requestedSourceReplyDeliveryMode,
     strictMessageToolOnly: ctx.InboundEventKind === "room_event",
     sendPolicy,
     suppressAcpChildUserDelivery,
@@ -1715,6 +1727,9 @@ export async function dispatchReplyFromConfig(
       normalizeOptionalString(ctx.ReplyToId) ??
       normalizeOptionalString(ctx.MessageSidFull) ??
       normalizeOptionalString(ctx.MessageSid);
+    const progressDispatchStartedAt = Date.now();
+    let pacedProgressDisabledNoticeSent = false;
+    let nativeVisibleProgressDelivered = false;
     const applySyntheticProgressReplyTarget = (payload: ReplyPayload): ReplyPayload => {
       if (
         !syntheticProgressReplyToId ||
@@ -1729,6 +1744,37 @@ export async function dispatchReplyFromConfig(
         replyToId: syntheticProgressReplyToId,
         replyToCurrent: true,
       };
+    };
+    const maybeSendPacedProgressDisabledNotice = async (source: string): Promise<void> => {
+      const mode = resolveProgressMode();
+      if (
+        suppressDelivery ||
+        mode === "paced" ||
+        pacedProgressDisabledNoticeSent ||
+        nativeVisibleProgressDelivered ||
+        Date.now() - progressDispatchStartedAt < PACED_PROGRESS_DISABLED_NOTICE_DELAY_MS
+      ) {
+        return;
+      }
+      pacedProgressDisabledNoticeSent = true;
+      if (pacedProgressDisabledNoticeTimer !== undefined) {
+        clearTimeout(pacedProgressDisabledNoticeTimer);
+        pacedProgressDisabledNoticeTimer = undefined;
+      }
+      logProgressEvent(
+        "disabled_notice",
+        {
+          source,
+          reason: "mode_not_paced",
+        },
+        { always: true },
+      );
+      await sendBindingNotice(
+        applySyntheticProgressReplyTarget({
+          text: formatPacedProgressDisabledText(mode),
+        }),
+        "additive",
+      );
     };
     logProgressEvent(
       "dispatch_start",
@@ -1745,6 +1791,7 @@ export async function dispatchReplyFromConfig(
         getReplyPayloadMetadata(payload)?.sourceReplyTranscriptMirror;
       if (hasOutboundReplyContent(payload, { trimText: true })) {
         markInboundDedupeReplayUnsafe();
+        await maybeSendPacedProgressDisabledNotice("final");
       }
       const dedupedPayload =
         sentPacedProgressTexts.length > 0
@@ -1951,6 +1998,7 @@ export async function dispatchReplyFromConfig(
       if (payload && !resolveSendableOutboundReplyParts(payload).hasContent) {
         return;
       }
+      nativeVisibleProgressDelivered = true;
       preferredPacedProgressLabel = "";
       preferredPacedProgressScore = 0;
       progressReporter?.noteVisibleDelivery();
@@ -1958,7 +2006,7 @@ export async function dispatchReplyFromConfig(
     };
     progressReporter = createProgressSummaryReporter({
       shouldSend: () =>
-        !suppressDelivery && shouldSendToolStartStatuses && shouldUsePacedProgress(),
+        !suppressDelivery && shouldSendVerboseProgressMessages && shouldUsePacedProgress(),
       send: async (text) => {
         const payload = applySyntheticProgressReplyTarget({
           text: formatPacedProgressText(text),
@@ -1973,11 +2021,17 @@ export async function dispatchReplyFromConfig(
         rememberSentPacedProgressText(text);
       },
     });
+    pacedProgressDisabledNoticeTimer = setTimeout(() => {
+      void maybeSendPacedProgressDisabledNotice("timer");
+    }, PACED_PROGRESS_DISABLED_NOTICE_DELAY_MS);
     const maybeSendWorkingStatus = async (label: string): Promise<void> => {
       if (shouldSuppressProgressDelivery()) {
         return;
       }
       const normalizedLabel = normalizeWorkingLabel(label);
+      if (normalizedLabel) {
+        await maybeSendPacedProgressDisabledNotice("working_status");
+      }
       if (shouldUsePacedProgress()) {
         notePacedProgress("working_status", normalizedLabel);
       }
@@ -2008,6 +2062,12 @@ export async function dispatchReplyFromConfig(
       explanation?: string;
       steps?: string[];
     }): Promise<void> => {
+      if (
+        normalizeOptionalString(payload.explanation) ||
+        (Array.isArray(payload.steps) && payload.steps.length > 0)
+      ) {
+        await maybeSendPacedProgressDisabledNotice("plan_update");
+      }
       if (
         shouldSuppressProgressDelivery() ||
         !shouldEmitVerboseProgress() ||
@@ -2193,7 +2253,7 @@ export async function dispatchReplyFromConfig(
           onBlockReplyQueued: wrapProgressCallback(params.replyOptions?.onBlockReplyQueued),
           onToolStart: async (payload) => {
             markProgress();
-            if (!suppressAutomaticSourceDelivery) {
+            if (shouldForwardProgressCallback({ forwardWhenSourceDeliverySuppressed: true })) {
               await onToolStartFromReplyOptions?.(payload);
             }
             const label = summarizeToolStartProgressLabel(payload);
@@ -2204,7 +2264,7 @@ export async function dispatchReplyFromConfig(
           },
           onItemEvent: async (payload) => {
             markProgress();
-            if (!suppressAutomaticSourceDelivery) {
+            if (shouldForwardProgressCallback({ forwardWhenSourceDeliverySuppressed: true })) {
               await onItemEventFromReplyOptions?.(payload);
             }
             const label = summarizeItemProgressLabel(payload);
@@ -2215,7 +2275,7 @@ export async function dispatchReplyFromConfig(
           },
           onCommandOutput: async (payload) => {
             markProgress();
-            if (!suppressAutomaticSourceDelivery) {
+            if (shouldForwardProgressCallback({ forwardWhenSourceDeliverySuppressed: true })) {
               await onCommandOutputFromReplyOptions?.(payload);
             }
             const label = summarizeCommandOutputProgressLabel(payload);
@@ -2224,8 +2284,12 @@ export async function dispatchReplyFromConfig(
             }
             notePacedProgress("command_output", label);
           },
-          onCompactionStart: wrapProgressCallback(params.replyOptions?.onCompactionStart),
-          onCompactionEnd: wrapProgressCallback(params.replyOptions?.onCompactionEnd),
+          onCompactionStart: wrapProgressCallback(params.replyOptions?.onCompactionStart, {
+            forwardWhenSourceDeliverySuppressed: true,
+          }),
+          onCompactionEnd: wrapProgressCallback(params.replyOptions?.onCompactionEnd, {
+            forwardWhenSourceDeliverySuppressed: true,
+          }),
           onToolResult: (payload: ReplyPayload) => {
             markProgress();
             const run = async () => {
@@ -2250,6 +2314,9 @@ export async function dispatchReplyFromConfig(
               const deliveryPayload = resolveToolDeliveryPayload(normalizedPayload);
               if (!deliveryPayload) {
                 return;
+              }
+              if (resolveSendableOutboundReplyParts(deliveryPayload).hasContent) {
+                await maybeSendPacedProgressDisabledNotice("tool_result");
               }
               if (shouldSuppressDefaultToolProgressMessages()) {
                 const hasMedia = resolveSendableOutboundReplyParts(deliveryPayload).hasMedia;
@@ -2278,7 +2345,7 @@ export async function dispatchReplyFromConfig(
           onPlanUpdate: async (payload) => {
             markProgress();
             markInboundDedupeReplayUnsafe();
-            if (!suppressAutomaticSourceDelivery) {
+            if (shouldForwardProgressCallback({ forwardWhenSourceDeliverySuppressed: true })) {
               await onPlanUpdateFromReplyOptions?.(payload);
             }
             if (payload.phase !== "update" || shouldSuppressDefaultToolProgressMessages()) {
@@ -2289,7 +2356,7 @@ export async function dispatchReplyFromConfig(
           onApprovalEvent: async (payload) => {
             markProgress();
             markInboundDedupeReplayUnsafe();
-            if (!suppressAutomaticSourceDelivery) {
+            if (shouldForwardProgressCallback({ forwardWhenSourceDeliverySuppressed: true })) {
               await onApprovalEventFromReplyOptions?.(payload);
             }
             if (payload.phase !== "requested" || shouldSuppressDefaultToolProgressMessages()) {
@@ -2308,7 +2375,7 @@ export async function dispatchReplyFromConfig(
           onPatchSummary: async (payload) => {
             markProgress();
             markInboundDedupeReplayUnsafe();
-            if (!suppressAutomaticSourceDelivery) {
+            if (shouldForwardProgressCallback({ forwardWhenSourceDeliverySuppressed: true })) {
               await onPatchSummaryFromReplyOptions?.(payload);
             }
             if (payload.phase !== "end" || shouldSuppressDefaultToolProgressMessages()) {
@@ -2390,6 +2457,7 @@ export async function dispatchReplyFromConfig(
                 accountId: replyRoute.accountId,
               });
               const normalizedPayload = await normalizeReplyMediaPayload(ttsPayload);
+              await maybeSendPacedProgressDisabledNotice("block");
               if (shouldRouteToOriginating) {
                 await sendPayloadAsync(normalizedPayload, context?.abortSignal, false);
               } else {
@@ -2591,6 +2659,9 @@ export async function dispatchReplyFromConfig(
     markIdle("message_error");
     throw err;
   } finally {
+    if (pacedProgressDisabledNoticeTimer !== undefined) {
+      clearTimeout(pacedProgressDisabledNoticeTimer);
+    }
     progressReporter?.dispose();
   }
 }

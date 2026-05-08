@@ -744,6 +744,12 @@ function firstFinalReplyPayload(dispatcher: ReplyDispatcher): ReplyPayload | und
   ) as ReplyPayload;
 }
 
+function firstBlockReplyPayload(dispatcher: ReplyDispatcher): ReplyPayload | undefined {
+  return (dispatcher.sendBlockReply as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
+    | ReplyPayload
+    | undefined;
+}
+
 function firstRouteReplyCall(): Record<string, unknown> {
   const call = firstMockArg(mocks.routeReply, "route reply");
   if (!call || typeof call !== "object") {
@@ -6107,7 +6113,7 @@ describe("sendPolicy deny — suppress delivery, not processing (#53328)", () =>
     const dispatcher = createDispatcher();
     const replyResolver = vi.fn(async (_ctx: MsgContext, opts?: GetReplyOptions) => {
       expect(opts?.sourceReplyDeliveryMode).toBe("automatic");
-      expect(opts?.disableBlockStreaming).toBeUndefined();
+      expect(opts?.disableBlockStreaming).toBe(false);
       return { text: "visible switched-model reply" } satisfies ReplyPayload;
     });
 

@@ -16,7 +16,7 @@ export type ProgressSummaryReporter = {
   dispose: () => void;
 };
 
-const DEFAULT_INITIAL_DELAY_MS = 6_000;
+export const DEFAULT_PROGRESS_SUMMARY_INITIAL_DELAY_MS = 6_000;
 const DEFAULT_REPEAT_DELAY_MS = 20_000;
 const DEFAULT_VISIBLE_DELIVERY_COOLDOWN_MS = 10_000;
 const DEFAULT_UNCHANGED_HEARTBEAT_MS = 45_000;
@@ -40,7 +40,7 @@ export function createProgressSummaryReporter(
   const schedule = params.schedule ?? ((fn, delayMs) => setTimeout(fn, delayMs));
   const cancel =
     params.cancel ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
-  const initialDelayMs = params.initialDelayMs ?? DEFAULT_INITIAL_DELAY_MS;
+  const initialDelayMs = params.initialDelayMs ?? DEFAULT_PROGRESS_SUMMARY_INITIAL_DELAY_MS;
   const repeatDelayMs = params.repeatDelayMs ?? DEFAULT_REPEAT_DELAY_MS;
   const visibleDeliveryCooldownMs =
     params.visibleDeliveryCooldownMs ?? DEFAULT_VISIBLE_DELIVERY_COOLDOWN_MS;
