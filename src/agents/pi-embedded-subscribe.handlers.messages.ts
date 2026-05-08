@@ -164,7 +164,7 @@ export function resolveSilentReplyFallbackText(params: {
 }): string {
   const text = coerceChatContentText(params.text);
   const trimmed = text.trim();
-  if (trimmed !== SILENT_REPLY_TOKEN) {
+  if (!isSilentReplyText(trimmed, SILENT_REPLY_TOKEN) && !isAnnounceSkip(trimmed)) {
     return text;
   }
   const fallback = coerceChatContentText(params.messagingToolSentTexts.at(-1)).trim();
@@ -663,33 +663,49 @@ export function handleMessageEnd(
   const assistantPhase = resolveAssistantMessagePhase(assistantMessage);
   const suppressVisibleAssistantOutput = shouldSuppressAssistantVisibleOutput(assistantMessage);
   const suppressDeterministicApprovalOutput = shouldSuppressDeterministicApprovalOutput(ctx.state);
+  const onBlockReply = ctx.params.onBlockReply;
+  promoteThinkingTagsToBlocks(assistantMessage);
+  const assistantText = coerceChatContentText(extractAssistantText(assistantMessage));
+  const rawThinkingCandidate =
+    extractAssistantThinking(assistantMessage) || extractThinkingFromTaggedText(assistantText);
+  const deliverCommentaryBlockReplies =
+    suppressVisibleAssistantOutput &&
+    assistantPhase === "commentary" &&
+    ctx.params.deliverCommentaryBlockReplies === true;
+  const deliverThinkingBlockReplies =
+    ctx.params.deliverThinkingBlockReplies === true && Boolean(onBlockReply);
   ctx.noteLastAssistant(assistantMessage);
   ctx.recordAssistantUsage((assistantMessage as { usage?: unknown }).usage);
   ctx.commitAssistantUsage();
-  if (suppressVisibleAssistantOutput) {
+  if (
+    suppressVisibleAssistantOutput &&
+    !deliverCommentaryBlockReplies &&
+    !deliverThinkingBlockReplies
+  ) {
     return;
   }
   promoteThinkingTagsToBlocks(assistantMessage);
 
-  const rawText = coerceChatContentText(extractAssistantText(assistantMessage));
   const rawVisibleText = coerceChatContentText(extractAssistantVisibleText(assistantMessage));
   appendRawStream({
     ts: Date.now(),
     event: "assistant_message_end",
     runId: ctx.params.runId,
     sessionId: (ctx.params.session as { id?: string }).id,
-    rawText,
+    rawText: assistantText,
     rawThinking: extractAssistantThinking(assistantMessage),
   });
   warnIfAssistantEmittedToolText(ctx, assistantMessage);
 
+  const userFacingText = deliverCommentaryBlockReplies ? assistantText : rawVisibleText;
   const text = resolveSilentReplyFallbackText({
-    text: ctx.stripBlockTags(rawVisibleText, { thinking: false, final: false }, { final: true }),
+    text: ctx.stripBlockTags(userFacingText, { thinking: false, final: false }, { final: true }),
     messagingToolSentTexts: ctx.state.messagingToolSentTexts,
   });
   const rawThinking =
-    ctx.state.includeReasoning || ctx.state.streamReasoning
-      ? extractAssistantThinking(assistantMessage) || extractThinkingFromTaggedText(rawText)
+    (ctx.state.includeReasoning || ctx.state.streamReasoning) &&
+    (!deliverCommentaryBlockReplies || deliverThinkingBlockReplies)
+      ? rawThinkingCandidate
       : "";
   const trimmedReasoning = rawThinking ? rawThinking.trim() : "";
   const trimmedText = text.trim();
@@ -725,6 +741,7 @@ export function handleMessageEnd(
     : cleanedText.slice(previousStreamedText.length);
 
   if (
+    !deliverCommentaryBlockReplies &&
     !ctx.params.silentExpected &&
     !suppressDeterministicApprovalOutput &&
     (cleanedText || hasMedia) &&
@@ -755,17 +772,21 @@ export function handleMessageEnd(
 
   const silentExpectedWithoutSentinel =
     ctx.params.silentExpected && !isSilentReplyText(trimmedText, SILENT_REPLY_TOKEN);
-  const finalAssistantText = silentExpectedWithoutSentinel ? "" : text;
-  const addedDuringMessage = ctx.state.assistantTexts.length > ctx.state.assistantTextBaseline;
+  const addedDuringMessage =
+    !deliverCommentaryBlockReplies &&
+    ctx.state.assistantTexts.length > ctx.state.assistantTextBaseline;
   const chunkerHasBuffered = ctx.blockChunker?.hasBuffered() ?? false;
-  ctx.finalizeAssistantTexts({
-    text: finalAssistantText,
-    addedDuringMessage,
-    chunkerHasBuffered,
-  });
+  if (!deliverCommentaryBlockReplies) {
+    const finalAssistantText = silentExpectedWithoutSentinel ? "" : text;
+    ctx.finalizeAssistantTexts({
+      text: finalAssistantText,
+      addedDuringMessage,
+      chunkerHasBuffered,
+    });
+  }
 
-  const onBlockReply = ctx.params.onBlockReply;
   const shouldEmitReasoning = Boolean(
+    !deliverCommentaryBlockReplies &&
     !ctx.params.silentExpected &&
     !suppressDeterministicApprovalOutput &&
     ctx.state.includeReasoning &&

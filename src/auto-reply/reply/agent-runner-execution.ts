@@ -1159,6 +1159,9 @@ export async function runAgentTurnWithFallback(params: {
     run.authProfileIdSource = err.authProfileId ? err.authProfileIdSource : undefined;
     run.autoFallbackPrimaryProbe = undefined;
   };
+  const showThinkingDirective = extractShowThinkingDirective(params.commandBody);
+  const commandBodyForRun = showThinkingDirective.cleaned;
+  const showThinkingRequested = showThinkingDirective.hasDirective;
 
   const runId = params.opts?.runId ?? crypto.randomUUID();
   const replyMediaContext =
@@ -1678,7 +1681,7 @@ export async function runAgentTurnWithFallback(params: {
                 sessionFile: params.followupRun.run.sessionFile,
                 workspaceDir: params.followupRun.run.workspaceDir,
                 config: runtimeConfig,
-                prompt: params.commandBody,
+                prompt: commandBodyForRun,
                 transcriptPrompt: params.transcriptCommandBody,
                 currentInboundEventKind: params.followupRun.currentInboundEventKind,
                 currentInboundContext: params.followupRun.currentInboundContext,
@@ -1847,6 +1850,11 @@ export async function runAgentTurnWithFallback(params: {
                   await params.typingSignals.signalMessageStart();
                   await params.opts?.onAssistantMessageStart?.();
                 },
+                bufferTextOnlyBlockReplies:
+                  !params.blockStreamingEnabled && Boolean(params.opts?.onBlockReply),
+                deliverCommentaryBlockReplies: Boolean(params.opts?.onBlockReply),
+                deliverThinkingBlockReplies:
+                  showThinkingRequested && Boolean(params.opts?.onBlockReply),
                 onReasoningStream:
                   params.typingSignals.shouldStartOnReasoning || params.opts?.onReasoningStream
                     ? async (payload) => {
