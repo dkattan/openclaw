@@ -1956,10 +1956,15 @@ export async function dispatchReplyFromConfig(
         })
       : undefined;
   const effectiveVisibleReplies = configuredVisibleReplies ?? harnessDefaultVisibleReplies;
+  const requestedSourceReplyDeliveryMode =
+    params.replyOptions?.sourceReplyDeliveryMode ??
+    (chatType === "direct" && params.replyOptions?.disableBlockStreaming !== undefined
+      ? "automatic"
+      : undefined);
   const prefersMessageToolDelivery =
-    params.replyOptions?.sourceReplyDeliveryMode === "message_tool_only" ||
+    requestedSourceReplyDeliveryMode === "message_tool_only" ||
     (ctx.InboundEventKind === "room_event" && !isInternalWebchatTurn) ||
-    (params.replyOptions?.sourceReplyDeliveryMode === undefined &&
+    (requestedSourceReplyDeliveryMode === undefined &&
       !isExplicitSourceReplyCommand(ctx, cfg) &&
       (configuredVisibleReplies === "message_tool" ||
         (!isInternalWebchatTurn && effectiveVisibleReplies === "message_tool")));
@@ -2019,7 +2024,7 @@ export async function dispatchReplyFromConfig(
   const sourceReplyPolicy = resolveSourceReplyVisibilityPolicy({
     cfg,
     ctx,
-    requested: params.replyOptions?.sourceReplyDeliveryMode,
+    requested: requestedSourceReplyDeliveryMode,
     strictMessageToolOnly: ctx.InboundEventKind === "room_event" && !isInternalWebchatTurn,
     sendPolicy,
     suppressAcpChildUserDelivery,
@@ -2426,6 +2431,7 @@ export async function dispatchReplyFromConfig(
       if (hasVisibleFinalContent) {
         markInboundDedupeReplayUnsafe();
         finalReplyDeliveryStarted = true;
+        await maybeSendPacedProgressDisabledNotice("final");
       }
       const dedupedPayload =
         sentPacedProgressTexts.length > 0
@@ -2959,37 +2965,79 @@ export async function dispatchReplyFromConfig(
             typingPolicy: typing.typingPolicy,
             suppressTyping: typing.suppressTyping,
             onPartialReply: wrapProgressCallback(params.replyOptions?.onPartialReply),
-            onReasoningStream: wrapProgressCallback(params.replyOptions?.onReasoningStream),
+            onReasoningStream: async (payload) => {
+              if (isDispatchOperationAborted()) {
+                return;
+              }
+              markProgress();
+              if (shouldForwardProgressCallback()) {
+                await params.replyOptions?.onReasoningStream?.(payload);
+              }
+              const label = summarizeReasoningLabel(payload.text);
+              if (!label) {
+                return;
+              }
+              await maybeSendPacedProgressDisabledNotice("reasoning");
+              notePacedProgress("reasoning", label);
+            },
             onReasoningEnd: wrapProgressCallback(params.replyOptions?.onReasoningEnd),
             onAssistantMessageStart: wrapProgressCallback(
               params.replyOptions?.onAssistantMessageStart,
             ),
             onBlockReplyQueued: wrapProgressCallback(params.replyOptions?.onBlockReplyQueued),
-            onToolStart: wrapProgressCallback(params.replyOptions?.onToolStart, {
-              forwardWhenSourceDeliverySuppressed: true,
-              requiresToolSummaryVisibility: true,
-              waitForDirectBlockReplyDelivery: true,
-            }),
-            onItemEvent: wrapProgressCallback(params.replyOptions?.onItemEvent, {
-              forwardWhenSourceDeliverySuppressed: true,
-              requiresToolSummaryVisibility: true,
-              waitForDirectBlockReplyDelivery: true,
-              onForward: (payload) => {
+            onToolStart,
+            onItemEvent: async (payload) => {
+              if (isDispatchOperationAborted()) {
+                return;
+              }
+              markProgress();
+              await waitForPendingDirectBlockReplyDelivery(dispatchAbortOperation?.abortSignal);
+              if (isDispatchOperationAborted()) {
+                return;
+              }
+              if (
+                shouldForwardProgressCallback({
+                  forwardWhenSourceDeliverySuppressed: true,
+                  requiresToolSummaryVisibility: true,
+                })
+              ) {
                 if (hasFailedProgressStatus(payload)) {
                   markVisibleToolErrorProgress();
                 }
-              },
-            }),
-            onCommandOutput: wrapProgressCallback(params.replyOptions?.onCommandOutput, {
-              forwardWhenSourceDeliverySuppressed: true,
-              requiresToolSummaryVisibility: true,
-              waitForDirectBlockReplyDelivery: true,
-              onForward: (payload) => {
+                await onItemEventFromReplyOptions?.(payload);
+              }
+              const label = summarizeItemProgressLabel(payload);
+              if (label) {
+                await maybeSendPacedProgressDisabledNotice("item");
+              }
+              notePacedProgress("item", label);
+            },
+            onCommandOutput: async (payload) => {
+              if (isDispatchOperationAborted()) {
+                return;
+              }
+              markProgress();
+              await waitForPendingDirectBlockReplyDelivery(dispatchAbortOperation?.abortSignal);
+              if (isDispatchOperationAborted()) {
+                return;
+              }
+              if (
+                shouldForwardProgressCallback({
+                  forwardWhenSourceDeliverySuppressed: true,
+                  requiresToolSummaryVisibility: true,
+                })
+              ) {
                 if (hasFailedProgressStatus(payload)) {
                   markVisibleToolErrorProgress();
                 }
-              },
-            }),
+                await onCommandOutputFromReplyOptions?.(payload);
+              }
+              const label = summarizeCommandOutputProgressLabel(payload);
+              if (label) {
+                await maybeSendPacedProgressDisabledNotice("command_output");
+              }
+              notePacedProgress("command_output", label);
+            },
             onCompactionStart: wrapProgressCallback(params.replyOptions?.onCompactionStart, {
               forwardWhenSourceDeliverySuppressed: true,
               requiresToolSummaryVisibility: true,
@@ -3048,6 +3096,9 @@ export async function dispatchReplyFromConfig(
                 if (shouldSuppressMessageToolOnlyTextErrorProgress(deliveryPayload)) {
                   return;
                 }
+                if (resolveSendableOutboundReplyParts(deliveryPayload).hasContent) {
+                  await maybeSendPacedProgressDisabledNotice("tool_result");
+                }
                 if (shouldSuppressDefaultToolProgressMessages()) {
                   const hasMedia = resolveSendableOutboundReplyParts(deliveryPayload).hasMedia;
                   if (!hasMedia && !hasExecApprovalPayload(deliveryPayload)) {
@@ -3063,6 +3114,7 @@ export async function dispatchReplyFromConfig(
                   markInboundDedupeReplayUnsafe();
                   dispatcher.sendToolResult(deliveryPayload);
                 }
+                noteVisibleProgressDelivery("tool_result", deliveryPayload);
               };
               return run();
             },
@@ -3235,13 +3287,16 @@ export async function dispatchReplyFromConfig(
                 if (isDispatchOperationAborted()) {
                   return;
                 }
+                await maybeSendPacedProgressDisabledNotice("block");
                 if (shouldRouteToOriginating) {
                   await sendPayloadAsync(normalizedPayload, context?.abortSignal, false, "block");
+                  noteVisibleProgressDelivery("block", normalizedPayload);
                 } else {
                   markInboundDedupeReplayUnsafe();
                   const delivered = dispatcher.sendBlockReply(normalizedPayload);
                   if (delivered) {
                     hasPendingDirectBlockReplyDelivery = true;
+                    noteVisibleProgressDelivery("block", normalizedPayload);
                   }
                 }
               };
