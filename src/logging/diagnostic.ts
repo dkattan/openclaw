@@ -76,6 +76,7 @@ const DEFAULT_STUCK_SESSION_WARN_MS = 120_000;
 const MIN_STUCK_SESSION_WARN_MS = 1_000;
 const MAX_STUCK_SESSION_WARN_MS = 24 * 60 * 60 * 1000;
 const MIN_STALLED_EMBEDDED_RUN_ABORT_MS = 5 * 60_000;
+const MIN_TERMINAL_PROGRESS_STALL_ABORT_MS = 60_000;
 const STALLED_EMBEDDED_RUN_ABORT_WARN_MULTIPLIER = 3;
 const RECENT_DIAGNOSTIC_ACTIVITY_MS = 120_000;
 const DEFAULT_LIVENESS_EVENT_LOOP_DELAY_WARN_MS = 1_000;
@@ -457,19 +458,37 @@ export function resolveStuckSessionWarnMs(config?: OpenClawConfig): number {
 export function resolveStuckSessionAbortMs(
   config: OpenClawConfig | undefined,
   stuckSessionWarnMs: number,
+  lastProgressReason?: string,
 ): number {
+  const configured = resolveConfiguredStuckSessionAbortMs(config, stuckSessionWarnMs);
+  if (configured !== undefined) {
+    return configured;
+  }
+  return resolveStalledEmbeddedRunAbortMs(stuckSessionWarnMs, lastProgressReason);
+}
+
+function resolveConfiguredStuckSessionAbortMs(
+  config: OpenClawConfig | undefined,
+  stuckSessionWarnMs: number,
+): number | undefined {
   const raw = config?.diagnostics?.stuckSessionAbortMs;
   if (typeof raw !== "number" || !Number.isFinite(raw)) {
-    return resolveStalledEmbeddedRunAbortMs(stuckSessionWarnMs);
+    return undefined;
   }
   const rounded = Math.floor(raw);
   if (rounded <= 0) {
-    return resolveStalledEmbeddedRunAbortMs(stuckSessionWarnMs);
+    return undefined;
   }
   return Math.max(stuckSessionWarnMs, rounded);
 }
 
-function resolveStalledEmbeddedRunAbortMs(stuckSessionWarnMs: number): number {
+function resolveStalledEmbeddedRunAbortMs(
+  stuckSessionWarnMs: number,
+  lastProgressReason?: string,
+): number {
+  if (isTerminalDiagnosticProgressReason(lastProgressReason)) {
+    return Math.max(MIN_TERMINAL_PROGRESS_STALL_ABORT_MS, stuckSessionWarnMs);
+  }
   return Math.max(
     MIN_STALLED_EMBEDDED_RUN_ABORT_MS,
     stuckSessionWarnMs * STALLED_EMBEDDED_RUN_ABORT_WARN_MULTIPLIER,
@@ -799,6 +818,22 @@ function sessionAttentionFields(params: {
   };
 }
 
+function isTerminalDiagnosticProgressReason(reason: string | undefined): boolean {
+  if (!reason) {
+    return false;
+  }
+  const normalized = reason.toLowerCase();
+  return (
+    normalized === "run:completed" ||
+    normalized === "embedded_run:ended" ||
+    normalized.includes("response.completed") ||
+    normalized.includes("rawresponseitem/completed") ||
+    normalized.includes("raw_response_item.completed") ||
+    normalized.includes("output_item.done") ||
+    normalized.includes("notification:item/completed") ||
+    normalized.includes("notification:item.completed")
+  );
+}
 function formatSessionActivityLogFields(activity: DiagnosticSessionActivitySnapshot): string {
   const fields: string[] = [];
   if (activity.lastProgressReason) {
@@ -828,29 +863,34 @@ export function logSessionAttention(
     ageMs: number;
     thresholdMs: number;
     abortThresholdMs?: number;
+    activity?: DiagnosticSessionActivitySnapshot;
   },
 ): SessionAttentionClassification | undefined {
   if (!areDiagnosticsEnabledForProcess()) {
     return undefined;
   }
   const state = getDiagnosticSessionState(params);
-  const activity = getDiagnosticSessionActivitySnapshot(
-    { sessionId: state.sessionId, sessionKey: state.sessionKey },
-    Date.now(),
-  );
+  const activity =
+    params.activity ??
+    getDiagnosticSessionActivitySnapshot(
+      { sessionId: state.sessionId, sessionKey: state.sessionKey },
+      Date.now(),
+    );
   const classification = classifySessionAttention({
     queueDepth: state.queueDepth,
     activity,
     staleMs: params.thresholdMs,
   });
+  const effectiveAbortThresholdMs =
+    params.abortThresholdMs ??
+    resolveStalledEmbeddedRunAbortMs(params.thresholdMs, activity.lastProgressReason);
   const recoveryEligible =
     classification.recoveryEligible ||
     isActiveAbortRecoveryEligible({
       classification,
       activity,
       ageMs: params.ageMs,
-      stuckSessionAbortMs:
-        params.abortThresholdMs ?? resolveStalledEmbeddedRunAbortMs(params.thresholdMs),
+      stuckSessionAbortMs: effectiveAbortThresholdMs,
     });
   if (classification.eventType === "session.stuck") {
     const nextWarnAgeMs =
@@ -1032,7 +1072,6 @@ export function startDiagnosticHeartbeat(
       }
     }
     const stuckSessionWarnMs = resolveStuckSessionWarnMs(heartbeatConfig);
-    const stuckSessionAbortMs = resolveStuckSessionAbortMs(heartbeatConfig, stuckSessionWarnMs);
     const now = Date.now();
     pruneDiagnosticSessionStates(now, true);
     const work = getDiagnosticWorkSnapshot(now);
@@ -1108,6 +1147,11 @@ export function startDiagnosticHeartbeat(
         const attentionAgeMs = idleQueuedEmbeddedRunStall
           ? (activity.lastProgressAgeMs ?? ageMs)
           : ageMs;
+        const stuckSessionAbortMs = resolveStuckSessionAbortMs(
+          heartbeatConfig,
+          stuckSessionWarnMs,
+          activity.lastProgressReason,
+        );
         const classification = logSessionAttention({
           sessionId: state.sessionId,
           sessionKey: state.sessionKey,
@@ -1115,6 +1159,7 @@ export function startDiagnosticHeartbeat(
           ageMs: attentionAgeMs,
           thresholdMs: stuckSessionWarnMs,
           abortThresholdMs: stuckSessionAbortMs,
+          activity,
         });
         if (classification?.recoveryEligible) {
           requestStuckSessionRecovery({
