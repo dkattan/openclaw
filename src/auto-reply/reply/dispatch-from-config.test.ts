@@ -758,18 +758,6 @@ function firstRouteReplyCall(): Record<string, unknown> {
   return call as Record<string, unknown>;
 }
 
-function firstBlockReplyPayload(dispatcher: ReplyDispatcher): ReplyPayload | undefined {
-  return (dispatcher.sendBlockReply as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
-    | ReplyPayload
-    | undefined;
-}
-
-function firstFinalReplyPayload(dispatcher: ReplyDispatcher): ReplyPayload | undefined {
-  return (dispatcher.sendFinalReply as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as
-    | ReplyPayload
-    | undefined;
-}
-
 function requireToolResultHandler(
   handler: GetReplyOptions["onToolResult"] | undefined,
 ): NonNullable<GetReplyOptions["onToolResult"]> {
@@ -2084,7 +2072,7 @@ describe("dispatchReplyFromConfig", () => {
     }
   });
 
-  it("keeps native mode free of synthetic paced progress updates", async () => {
+  it("explains how to enable paced progress during long native turns", async () => {
     vi.useFakeTimers();
     try {
       setNoAbort();
@@ -2104,6 +2092,11 @@ describe("dispatchReplyFromConfig", () => {
           text: "Inspecting payload dependencies to decide the safest fix.",
         });
         return new Promise<ReplyPayload>((resolve) => {
+          setTimeout(() => {
+            void opts?.onReasoningStream?.({
+              text: "Still inspecting payload dependencies to decide the safest fix.",
+            });
+          }, 7_000);
           setTimeout(
             () =>
               resolve({

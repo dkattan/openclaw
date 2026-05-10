@@ -495,7 +495,6 @@ function formatPacedProgressDisabledText(mode: ProgressMode): string {
 }
 
 const PACED_PROGRESS_DISABLED_NOTICE_DELAY_MS = 7_000;
-
 function sanitizeProgressFreeformText(text?: string): string {
   const normalized = normalizeOptionalString(text)
     ?.replace(/^(\[Paced Progress\]:\s*)?(Working:|Still working:)\s*/i, "")
