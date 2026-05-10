@@ -581,6 +581,11 @@ const createResolveProgressMode = (params: {
   };
 };
 
+function formatPacedProgressDisabledText(mode: ProgressMode): string {
+  return `Paced progress updates are not enabled in this thread right now (current progress mode: ${mode}). Run /progress paced here to enable regular updates.`;
+}
+
+const PACED_PROGRESS_DISABLED_NOTICE_DELAY_MS = 7_000;
 function sanitizeProgressFreeformText(text?: string): string {
   const normalized = normalizeOptionalString(text)
     ?.replace(/^(\[Paced Progress\]:\s*)?(Working:|Still working:)\s*/i, "")
