@@ -517,6 +517,57 @@ describe("stuck session diagnostics threshold", () => {
     );
   });
 
+  it("aborts stale notification:item/completed embedded runs on the shorter terminal-progress timeout", () => {
+    const events: DiagnosticEventPayload[] = [];
+    const recoverStuckSession = vi.fn();
+    const unsubscribe = onDiagnosticEvent((event) => {
+      events.push(event);
+    });
+    try {
+      startDiagnosticHeartbeat(
+        {
+          diagnostics: {
+            enabled: true,
+            stuckSessionWarnMs: 30_000,
+          },
+        },
+        { recoverStuckSession },
+      );
+      logSessionStateChange({ sessionId: "s1", sessionKey: "main", state: "processing" });
+      markDiagnosticEmbeddedRunStarted({ sessionId: "s1", sessionKey: "main" });
+      markDiagnosticRunProgressForTest({
+        sessionId: "s1",
+        sessionKey: "main",
+        reason: "codex_app_server:notification:item/completed",
+      });
+
+      vi.advanceTimersByTime(59_000);
+      expect(recoverStuckSession).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(2_000);
+    } finally {
+      unsubscribe();
+    }
+
+    expect(events.findLast((event) => event.type === "session.stalled")).toMatchObject({
+      classification: "stalled_agent_run",
+      activeWorkKind: "embedded_run",
+      terminalProgressStale: true,
+      lastProgressReason: "codex_app_server:notification:item/completed",
+    });
+    expect(recoverStuckSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "s1",
+        sessionKey: "main",
+        ageMs: expect.any(Number),
+        queueDepth: 0,
+        allowActiveAbort: true,
+        expectedState: "processing",
+        stateGeneration: expect.any(Number),
+      }),
+    );
+  });
+
   it("aborts and drains embedded runs after an extended no-progress stall", () => {
     const events: DiagnosticEventPayload[] = [];
     const recoverStuckSession = vi.fn();
@@ -1801,6 +1852,16 @@ describe("stuck session diagnostics threshold", () => {
       ),
     ).toBe(48 * 60 * 60_000);
     expect(resolveStuckSessionAbortMs(undefined, 30_000)).toBe(5 * 60_000);
+    expect(
+      resolveStuckSessionAbortMs(undefined, 30_000, "codex_app_server:notification:item/completed"),
+    ).toBe(60_000);
+    expect(
+      resolveStuckSessionAbortMs(
+        undefined,
+        120_000,
+        "codex_app_server:notification:item/completed",
+      ),
+    ).toBe(120_000);
   });
 });
 
