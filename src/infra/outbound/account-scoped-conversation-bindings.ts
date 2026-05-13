@@ -1,10 +1,15 @@
+import path from "node:path";
 import { resolveThreadBindingConversationIdFromBindingId } from "../../channels/thread-binding-id.js";
 import {
   resolveThreadBindingIdleTimeoutMsForChannel,
   resolveThreadBindingMaxAgeMsForChannel,
 } from "../../channels/thread-bindings-policy.js";
+import { resolveStateDir } from "../../config/paths.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { saveJsonFile } from "../../plugin-sdk/json-store.js";
 import { normalizeAccountId, resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
+import { normalizeOptionalString } from "../../shared/string-coerce.js";
+import { loadJsonFile } from "../json-file.js";
 import {
   registerSessionBindingAdapter,
   unregisterSessionBindingAdapter,
@@ -16,6 +21,7 @@ import {
 export type AccountScopedConversationBindingRecord<TKind extends string = string> = {
   accountId: string;
   conversationId: string;
+  parentConversationId?: string;
   targetKind: TKind;
   targetSessionKey: string;
   agentId?: string;
@@ -30,9 +36,13 @@ export type AccountScopedConversationBindingManager<TKind extends string = strin
   getByConversationId: (
     conversationId: string,
   ) => AccountScopedConversationBindingRecord<TKind> | undefined;
+  resolveByParentConversationId: (
+    parentConversationId: string,
+  ) => AccountScopedConversationBindingRecord<TKind> | undefined;
   listBySessionKey: (targetSessionKey: string) => AccountScopedConversationBindingRecord<TKind>[];
   bindConversation: (params: {
     conversationId: string;
+    parentConversationId?: string;
     targetKind: BindingTargetKind;
     targetSessionKey: string;
     metadata?: Record<string, unknown>;
@@ -51,7 +61,15 @@ export type AccountScopedConversationBindingManager<TKind extends string = strin
 type AccountScopedConversationBindingsState<TKind extends string> = {
   managersByAccountId: Map<string, AccountScopedConversationBindingManager<TKind>>;
   bindingsByAccountConversation: Map<string, AccountScopedConversationBindingRecord<TKind>>;
+  loadedAccountIds: Set<string>;
 };
+
+type PersistedAccountScopedConversationBindingsFile<TKind extends string = string> = {
+  version: 1;
+  bindings: AccountScopedConversationBindingRecord<TKind>[];
+};
+
+const ACCOUNT_SCOPED_BINDINGS_FILE_VERSION = 1;
 
 function getState<TKind extends string>(
   stateKey: symbol,
@@ -66,6 +84,7 @@ function getState<TKind extends string>(
   const next: AccountScopedConversationBindingsState<TKind> = {
     managersByAccountId: new Map(),
     bindingsByAccountConversation: new Map(),
+    loadedAccountIds: new Set(),
   };
   globalStore[stateKey] = next;
   return next;
