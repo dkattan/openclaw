@@ -1546,18 +1546,30 @@ export async function dispatchReplyFromConfig(
           "",
       ) ?? "off",
   });
-  const resolveProgressMode = createResolveProgressMode({
+  const initialProgressMode =
+    normalizeProgressMode(
+      typeof sessionStoreEntry.entry?.progressMode === "string"
+        ? sessionStoreEntry.entry.progressMode
+        : undefined,
+    ) ?? "native";
+  const readProgressMode = createResolveProgressMode({
     sessionKey: acpDispatchSessionKey,
     storePath: sessionStoreEntry.storePath,
-    fallbackMode:
-      normalizeProgressMode(
-        typeof sessionStoreEntry.entry?.progressMode === "string"
-          ? sessionStoreEntry.entry.progressMode
-          : undefined,
-      ) ?? "native",
+    fallbackMode: initialProgressMode,
   });
   const shouldEmitVerboseProgress = verboseProgress.shouldEmit;
   const shouldEmitFullVerboseProgress = verboseProgress.shouldEmitFull;
+  // Freeze progress mode per dispatch after the first real progress evaluation so
+  // other in-flight turns cannot flip this turn between native/paced mid-run.
+  let dispatchProgressMode: ProgressMode | undefined;
+  const resolveProgressMode = (options?: { freeze?: boolean }): ProgressMode => {
+    const mode = dispatchProgressMode ?? readProgressMode();
+    if (options?.freeze !== false) {
+      dispatchProgressMode ??= mode;
+    }
+    return mode;
+  };
+  const shouldUsePacedProgress = () => resolveProgressMode() === "paced";
   const replyRoute = resolveEffectiveReplyRoute({ ctx, entry: sessionStoreEntry.entry });
   // Restore route thread context only from the active turn or the thread-scoped session key.
   // Do not read thread ids from the normalised session store here: `origin.threadId` can be
@@ -2355,7 +2367,7 @@ export async function dispatchReplyFromConfig(
       },
       options?: { always?: boolean },
     ) => {
-      const mode = resolveProgressMode();
+      const mode = dispatchProgressMode ?? initialProgressMode;
       if (!options?.always && mode !== "paced") {
         return;
       }
