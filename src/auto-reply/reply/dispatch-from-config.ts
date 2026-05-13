@@ -1120,7 +1120,7 @@ export async function dispatchReplyFromConfig(
           "",
       ) ?? "off",
   });
-  const resolveProgressMode = createResolveProgressMode({
+  const readProgressMode = createResolveProgressMode({
     sessionKey: acpDispatchSessionKey,
     storePath: sessionStoreEntry.storePath,
     fallbackMode:
@@ -1130,6 +1130,16 @@ export async function dispatchReplyFromConfig(
           : undefined,
       ) ?? "native",
   });
+  // Freeze progress mode per dispatch after the first real progress evaluation so
+  // other in-flight turns cannot flip this turn between native/paced mid-run.
+  let dispatchProgressMode: ProgressMode | undefined;
+  const resolveProgressMode = (options?: { freeze?: boolean }): ProgressMode => {
+    const mode = dispatchProgressMode ?? readProgressMode();
+    if (options?.freeze !== false) {
+      dispatchProgressMode ??= mode;
+    }
+    return mode;
+  };
   const shouldUsePacedProgress = () => resolveProgressMode() === "paced";
   const replyRoute = resolveEffectiveReplyRoute({ ctx, entry: sessionStoreEntry.entry });
   // Restore route thread context only from the active turn or the thread-scoped session key.
@@ -1696,7 +1706,7 @@ export async function dispatchReplyFromConfig(
       },
       options?: { always?: boolean },
     ) => {
-      const mode = resolveProgressMode();
+      const mode = resolveProgressMode({ freeze: event !== "dispatch_start" });
       if (!options?.always && mode !== "paced") {
         return;
       }

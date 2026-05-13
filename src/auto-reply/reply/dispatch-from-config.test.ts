@@ -2130,6 +2130,118 @@ describe("dispatchReplyFromConfig", () => {
     }
   });
 
+  it("adopts paced mode when the session changes before the first progress callback", async () => {
+    vi.useFakeTimers();
+    try {
+      setNoAbort();
+      sessionStoreMocks.currentEntry = {
+        progressMode: "native",
+      };
+      const cfg = emptyConfig;
+      const dispatcher = createDispatcher();
+      const ctx = buildTestCtx({
+        Provider: "bluebubbles",
+        Surface: "bluebubbles",
+        ChatType: "direct",
+        SessionKey: "agent:main:bluebubbles:direct:+15550001111",
+        RootMessageId: "thread-root-1",
+        ReplyToIdFull: "reply-msg-1",
+        MessageSidFull: "current-msg-1",
+      });
+
+      const replyResolver = (_ctx: MsgContext, opts?: GetReplyOptions, _cfg?: OpenClawConfig) =>
+        new Promise<ReplyPayload>((resolve) => {
+          setTimeout(() => {
+            sessionStoreMocks.currentEntry = {
+              progressMode: "paced",
+            };
+          }, 2_000);
+          setTimeout(() => {
+            void opts?.onReasoningStream?.({
+              text: "Finished using reasoning.",
+            });
+          }, 7_000);
+          setTimeout(() => resolve({ text: "done" } satisfies ReplyPayload), 11_000);
+        });
+
+      const dispatchPromise = dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
+
+      await vi.advanceTimersByTimeAsync(7_000);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(firstToolResultPayload(dispatcher)).toEqual(
+        expect.objectContaining({
+          text: "[Paced Progress]: Finished using reasoning.",
+          replyToId: "thread-root-1",
+          replyToCurrent: true,
+        }),
+      );
+
+      await vi.advanceTimersByTimeAsync(3_999);
+      await dispatchPromise;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps an in-flight turn on its original progress mode after later session changes", async () => {
+    vi.useFakeTimers();
+    try {
+      setNoAbort();
+      sessionStoreMocks.currentEntry = {
+        progressMode: "native",
+      };
+      const cfg = emptyConfig;
+      const dispatcher = createDispatcher();
+      const ctx = buildTestCtx({
+        Provider: "bluebubbles",
+        Surface: "bluebubbles",
+        ChatType: "direct",
+        SessionKey: "agent:main:bluebubbles:direct:+15550001111",
+        RootMessageId: "thread-root-1",
+        ReplyToIdFull: "reply-msg-1",
+        MessageSidFull: "current-msg-1",
+      });
+
+      const replyResolver = (_ctx: MsgContext, opts?: GetReplyOptions, _cfg?: OpenClawConfig) =>
+        new Promise<ReplyPayload>((resolve) => {
+          setTimeout(() => {
+            void opts?.onReasoningStream?.({
+              text: "Inspecting payload dependencies to decide the safest fix.",
+            });
+          }, 1_000);
+          setTimeout(() => {
+            sessionStoreMocks.currentEntry = {
+              progressMode: "paced",
+            };
+          }, 2_000);
+          setTimeout(() => {
+            void opts?.onReasoningStream?.({
+              text: "Finished using reasoning.",
+            });
+          }, 7_000);
+          setTimeout(() => resolve({ text: "done" } satisfies ReplyPayload), 11_000);
+        });
+
+      const dispatchPromise = dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
+
+      await vi.advanceTimersByTimeAsync(7_000);
+      expect(firstToolResultPayload(dispatcher)).toEqual(
+        expect.objectContaining({
+          text: expect.stringContaining("current progress mode: native"),
+          replyToId: "thread-root-1",
+          replyToCurrent: true,
+        }),
+      );
+      expect(firstToolResultPayload(dispatcher)?.text).toContain("/progress paced");
+      expect(dispatcher.sendToolResult).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(4_000);
+      await dispatchPromise;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps quick native replies free of paced troubleshooting notices", async () => {
     vi.useFakeTimers();
     try {
