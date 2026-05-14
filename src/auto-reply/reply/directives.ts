@@ -29,6 +29,7 @@ const THINK_DIRECTIVE_PATTERN = compileDirectivePattern(["thinking", "think", "t
 const VERBOSE_DIRECTIVE_PATTERN = compileDirectivePattern(["verbose", "v"]);
 const TRACE_DIRECTIVE_PATTERN = compileDirectivePattern(["trace"]);
 const FAST_DIRECTIVE_PATTERN = compileDirectivePattern(["fast"]);
+const PROGRESS_DIRECTIVE_PATTERN = compileDirectivePattern(["progress"]);
 const ELEVATED_DIRECTIVE_PATTERN = compileDirectivePattern(["elevated", "elev"]);
 const REASONING_DIRECTIVE_PATTERN = compileDirectivePattern(["reasoning", "reason"]);
 const STATUS_DIRECTIVE_PATTERN = compileDirectivePattern(["status"], `(?:\\s*:\\s*)?`);
@@ -180,7 +181,7 @@ export function extractProgressDirective(body?: string): {
   if (!body) {
     return { cleaned: "", hasDirective: false };
   }
-  const extracted = extractLevelDirective(body, ["progress"], normalizeProgressMode);
+  const extracted = extractLevelDirective(body, PROGRESS_DIRECTIVE_PATTERN, normalizeProgressMode);
   return {
     cleaned: extracted.cleaned,
     progressMode: extracted.level,
