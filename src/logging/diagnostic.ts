@@ -28,7 +28,6 @@ import {
 } from "./diagnostic-runtime.js";
 import {
   classifySessionAttention,
-  isTerminalDiagnosticProgressReason,
   type SessionAttentionClassification,
 } from "./diagnostic-session-attention.js";
 import {
