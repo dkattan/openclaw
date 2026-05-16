@@ -32,6 +32,7 @@ const FAST_DIRECTIVE_PATTERN = compileDirectivePattern(["fast"]);
 const PROGRESS_DIRECTIVE_PATTERN = compileDirectivePattern(["progress"]);
 const ELEVATED_DIRECTIVE_PATTERN = compileDirectivePattern(["elevated", "elev"]);
 const REASONING_DIRECTIVE_PATTERN = compileDirectivePattern(["reasoning", "reason"]);
+const SHOW_THINKING_DIRECTIVE_PATTERN = compileDirectivePattern(["showthinking"]);
 const STATUS_DIRECTIVE_PATTERN = compileDirectivePattern(["status"], `(?:\\s*:\\s*)?`);
 
 const matchLevelDirective = (
@@ -237,7 +238,7 @@ export function extractShowThinkingDirective(body?: string): {
   if (!body) {
     return { cleaned: "", hasDirective: false };
   }
-  return extractSimpleDirective(body, ["showthinking"]);
+  return extractSimpleDirective(body, SHOW_THINKING_DIRECTIVE_PATTERN);
 }
 
 export function extractStatusDirective(body?: string): {
