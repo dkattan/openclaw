@@ -190,6 +190,9 @@ export type RunEmbeddedAgentParams = {
   onAssistantMessageStart?: () => void | Promise<void>;
   onBlockReply?: (payload: BlockReplyPayload) => void | Promise<void>;
   onBlockReplyFlush?: () => void | Promise<void>;
+  bufferTextOnlyBlockReplies?: boolean;
+  deliverCommentaryBlockReplies?: boolean;
+  deliverThinkingBlockReplies?: boolean;
   blockReplyBreak?: "text_end" | "message_end";
   blockReplyChunking?: BlockReplyChunking;
   onReasoningStream?: (payload: {

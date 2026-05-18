@@ -8,6 +8,7 @@ export function createEmptyInlineDirectives(): InlineDirectives {
     hasVerboseDirective: false,
     hasFastDirective: false,
     clearFastMode: false,
+    hasProgressDirective: false,
     hasReasoningDirective: false,
     hasTraceDirective: false,
     hasElevatedDirective: false,

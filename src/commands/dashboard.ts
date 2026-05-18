@@ -23,6 +23,7 @@ async function resolveDashboardTarget() {
   const bind = cfg.gateway?.bind ?? "loopback";
   const basePath = cfg.gateway?.controlUi?.basePath;
   const customBindHost = cfg.gateway?.customBindHost;
+  const tlsEnabled = cfg.gateway?.tls?.enabled === true;
   const resolvedToken = await resolveGatewayAuthToken({
     cfg,
     env: process.env,
@@ -37,7 +38,7 @@ async function resolveDashboardTarget() {
     bind: bind === "lan" ? "loopback" : bind,
     customBindHost,
     basePath,
-    tlsEnabled: cfg.gateway?.tls?.enabled === true,
+    tlsEnabled,
   });
   // Avoid embedding externally managed SecretRef tokens in terminal/clipboard/browser args.
   const includeTokenInUrl = token.length > 0 && !resolvedToken.secretRefConfigured;
@@ -49,6 +50,7 @@ async function resolveDashboardTarget() {
   return {
     port,
     basePath,
+    tlsEnabled,
     links,
     resolvedToken,
     token,
@@ -74,7 +76,8 @@ export async function dashboardCommand(
   }
 
   const target = readiness.recovered ? await resolveDashboardTarget() : initialTarget;
-  const { port, basePath, links, resolvedToken, token, includeTokenInUrl, dashboardUrl } = target;
+  const { port, basePath, tlsEnabled, links, resolvedToken, token, includeTokenInUrl, dashboardUrl } =
+    target;
 
   runtime.log(`Dashboard URL: ${links.httpUrl}`);
   if (includeTokenInUrl) {
