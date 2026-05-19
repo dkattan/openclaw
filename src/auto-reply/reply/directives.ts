@@ -29,7 +29,9 @@ const THINK_DIRECTIVE_PATTERN = compileDirectivePattern(["thinking", "think", "t
 const VERBOSE_DIRECTIVE_PATTERN = compileDirectivePattern(["verbose", "v"]);
 const TRACE_DIRECTIVE_PATTERN = compileDirectivePattern(["trace"]);
 const FAST_DIRECTIVE_PATTERN = compileDirectivePattern(["fast"]);
-const PROGRESS_DIRECTIVE_PATTERN = compileDirectivePattern(["progress"]);
+const PROGRESS_DIRECTIVE_PATTERN = compileDirectivePattern(["progress", "updates"]);
+const PROGRESS_PLAIN_LINE_PATTERN =
+  /^\s*(?:progress|updates)(?:\s*:\s*|\s+)?([A-Za-z-]+)?\s*$/i;
 const ELEVATED_DIRECTIVE_PATTERN = compileDirectivePattern(["elevated", "elev"]);
 const REASONING_DIRECTIVE_PATTERN = compileDirectivePattern(["reasoning", "reason"]);
 const SHOW_THINKING_DIRECTIVE_PATTERN = compileDirectivePattern(["showthinking"]);
@@ -87,6 +89,34 @@ const extractLevelDirective = <T>(
     rawLevel,
     hasDirective: true,
   };
+};
+
+const extractStandaloneLineLevelDirective = <T>(
+  body: string,
+  pattern: RegExp,
+  normalize: (raw?: string) => T | undefined,
+): ExtractedLevel<T> => {
+  const lines = body.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = lines[index]?.match(pattern);
+    if (!match) {
+      continue;
+    }
+    const rawLevel = match[1];
+    const level = normalize(rawLevel);
+    const cleaned = lines
+      .filter((_, lineIndex) => lineIndex !== index)
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    return {
+      cleaned,
+      level,
+      rawLevel,
+      hasDirective: true,
+    };
+  }
+  return { cleaned: body.trim(), hasDirective: false };
 };
 
 const extractSimpleDirective = (
@@ -183,11 +213,18 @@ export function extractProgressDirective(body?: string): {
     return { cleaned: "", hasDirective: false };
   }
   const extracted = extractLevelDirective(body, PROGRESS_DIRECTIVE_PATTERN, normalizeProgressMode);
+  const resolved = extracted.hasDirective
+    ? extracted
+    : extractStandaloneLineLevelDirective(
+        body,
+        PROGRESS_PLAIN_LINE_PATTERN,
+        normalizeProgressMode,
+      );
   return {
-    cleaned: extracted.cleaned,
-    progressMode: extracted.level,
-    rawLevel: extracted.rawLevel,
-    hasDirective: extracted.hasDirective,
+    cleaned: resolved.cleaned,
+    progressMode: resolved.level,
+    rawLevel: resolved.rawLevel,
+    hasDirective: resolved.hasDirective,
   };
 }
 

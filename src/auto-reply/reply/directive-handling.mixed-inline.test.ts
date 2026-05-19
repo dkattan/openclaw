@@ -318,8 +318,8 @@ describe("mixed inline directives", () => {
     expect(sessionEntry.execAsk).toBe("always");
     expect(sessionEntry.execNode).toBe("worker-1");
   });
-  it("emits directive ack while persisting inline paced progress in mixed messages", async () => {
-    const directives = parseInlineDirectives("please reply\n/progress paced");
+  it("emits directive ack while persisting inline progress updates in mixed messages", async () => {
+    const directives = parseInlineDirectives("please reply\nupdates on");
     const cfg = createConfig();
     const sessionEntry = createSessionEntry({ progressMode: "native" });
     const sessionStore = { "agent:main:imessage:user": sessionEntry };
@@ -361,7 +361,7 @@ describe("mixed inline directives", () => {
     });
 
     expect(fastLane.directiveAck).toEqual({
-      text: "⚙️ Progress mode set to paced.",
+      text: "⚙️ Progress updates enabled.",
     });
 
     await persistInlineDirectives({
@@ -389,6 +389,15 @@ describe("mixed inline directives", () => {
 
     expect(sessionEntry.progressMode).toBe("paced");
   });
+
+  it("keeps slash progress directives compatible", () => {
+    const directives = parseInlineDirectives("please reply\n/progress paced");
+
+    expect(directives.cleaned).toBe("please reply");
+    expect(directives.hasProgressDirective).toBe(true);
+    expect(directives.progressMode).toBe("paced");
+  });
+
   it("does not persist trace directives for unauthorized mixed messages", async () => {
     const directives = parseInlineDirectives("please reply\n/trace raw");
     const cfg = createConfig();

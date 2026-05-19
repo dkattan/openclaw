@@ -581,8 +581,8 @@ const createResolveProgressMode = (params: {
   };
 };
 
-function formatPacedProgressDisabledText(mode: ProgressMode): string {
-  return `Paced progress updates are not enabled in this thread right now (current progress mode: ${mode}). Run /progress paced here to enable regular updates.`;
+function formatPacedProgressDisabledText(): string {
+  return 'Working on it. If you\'d like progress updates here, reply "updates on".';
 }
 
 const PACED_PROGRESS_DISABLED_NOTICE_DELAY_MS = 7_000;
@@ -2438,6 +2438,36 @@ export async function dispatchReplyFromConfig(
         replyToId: syntheticProgressReplyToId,
         replyToCurrent: true,
       };
+    };
+    const maybeSendPacedProgressDisabledNotice = async (source: string): Promise<void> => {
+      if (
+        suppressDelivery ||
+        pacedProgressDisabledNoticeSent ||
+        nativeVisibleProgressDelivered ||
+        Date.now() - progressDispatchStartedAt < PACED_PROGRESS_DISABLED_NOTICE_DELAY_MS
+      ) {
+        return;
+      }
+      const mode = resolveProgressMode();
+      if (mode === "paced") {
+        return;
+      }
+      pacedProgressDisabledNoticeSent = true;
+      clearPacedProgressDisabledNoticeTimer();
+      logProgressEvent(
+        "disabled_notice",
+        {
+          source,
+          reason: "mode_not_paced",
+        },
+        { always: true },
+      );
+      await sendBindingNotice(
+        applySyntheticProgressReplyTarget({
+          text: formatPacedProgressDisabledText(),
+        }),
+        "additive",
+      );
     };
     logProgressEvent(
       "dispatch_start",
