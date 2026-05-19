@@ -490,8 +490,8 @@ const createResolveProgressMode = (params: {
   };
 };
 
-function formatPacedProgressDisabledText(mode: ProgressMode): string {
-  return `Paced progress updates are not enabled in this thread right now (current progress mode: ${mode}). Run /progress paced here to enable regular updates.`;
+function formatPacedProgressDisabledText(): string {
+  return 'Working on it. If you\'d like progress updates here, reply "updates on".';
 }
 
 const PACED_PROGRESS_DISABLED_NOTICE_DELAY_MS = 7_000;
@@ -1796,7 +1796,7 @@ export async function dispatchReplyFromConfig(
       );
       await sendBindingNotice(
         applySyntheticProgressReplyTarget({
-          text: formatPacedProgressDisabledText(mode),
+          text: formatPacedProgressDisabledText(),
         }),
         "additive",
       );

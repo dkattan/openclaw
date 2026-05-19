@@ -155,10 +155,10 @@ export function normalizeProgressMode(raw?: string | null): ProgressMode | undef
     return undefined;
   }
   const key = normalizeLowercaseStringOrEmpty(raw);
-  if (["native", "default", "live"].includes(key)) {
+  if (["native", "default", "live", "off", "false", "no", "0", "disable", "disabled"].includes(key)) {
     return "native";
   }
-  if (["paced", "pacing"].includes(key)) {
+  if (["paced", "pacing", "on", "true", "yes", "1", "enable", "enabled"].includes(key)) {
     return "paced";
   }
   return undefined;

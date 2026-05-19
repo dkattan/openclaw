@@ -1665,6 +1665,40 @@ describe("handleDirectiveOnly model persist behavior (fixes #1435)", () => {
     expect(sessionEntry.fastMode).toBeUndefined();
   });
 
+  it("persists and reports progress updates directives", async () => {
+    const sessionEntry = createSessionEntry();
+    const sessionStore = { [sessionKey]: sessionEntry };
+
+    const onReply = await handleDirectiveOnly(
+      createHandleParams({
+        directives: parseInlineDirectives("updates on"),
+        sessionEntry,
+        sessionStore,
+      }),
+    );
+    expect(onReply?.text).toContain("Progress updates enabled");
+    expect(sessionEntry.progressMode).toBe("paced");
+
+    const statusReply = await handleDirectiveOnly(
+      createHandleParams({
+        directives: parseInlineDirectives("updates"),
+        sessionEntry,
+        sessionStore,
+      }),
+    );
+    expect(statusReply?.text).toContain("Progress updates are on");
+
+    const offReply = await handleDirectiveOnly(
+      createHandleParams({
+        directives: parseInlineDirectives("progress off"),
+        sessionEntry,
+        sessionStore,
+      }),
+    );
+    expect(offReply?.text).toContain("Progress updates disabled");
+    expect(sessionEntry.progressMode).toBe("native");
+  });
+
   it("persists and reports elevated-mode directives when allowed", async () => {
     const sessionEntry = createSessionEntry();
     const sessionStore = { [sessionKey]: sessionEntry };

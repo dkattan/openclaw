@@ -35,6 +35,20 @@ import type { ElevatedLevel, ReasoningLevel, ThinkLevel } from "./directives.js"
 import { refreshQueuedFollowupSession } from "./queue.js";
 import { resolveRuntimePolicySessionKey } from "./runtime-policy-session-key.js";
 
+function formatProgressUpdatesStatus(mode: "native" | "paced" | undefined): string {
+  return withOptions(`Progress updates are ${mode === "paced" ? "on" : "off"}.`, "on, off");
+}
+
+function formatInvalidProgressUpdatesSetting(rawLevel: string): string {
+  return `Unrecognized progress updates setting "${rawLevel}". Valid options: on, off.`;
+}
+
+function formatProgressUpdatesAck(mode: "native" | "paced"): string {
+  return formatDirectiveAck(
+    mode === "paced" ? "Progress updates enabled." : "Progress updates disabled.",
+  );
+}
+
 export async function handleDirectiveOnly(
   params: HandleDirectiveOnlyParams,
 ): Promise<ReplyPayload | undefined> {
@@ -219,11 +233,11 @@ export async function handleDirectiveOnly(
     if (!directives.rawProgressMode) {
       const level = (sessionEntry.progressMode as "native" | "paced" | undefined) ?? "native";
       return {
-        text: withOptions(`Current progress mode: ${level}.`, "native, paced"),
+        text: formatProgressUpdatesStatus(level),
       };
     }
     return {
-      text: `Unrecognized progress mode "${directives.rawProgressMode}". Valid levels: native, paced.`,
+      text: formatInvalidProgressUpdatesSetting(directives.rawProgressMode),
     };
   }
   if (directives.hasReasoningDirective && !directives.reasoningLevel) {
@@ -557,7 +571,7 @@ export async function handleDirectiveOnly(
     );
   }
   if (directives.hasProgressDirective && directives.progressMode) {
-    parts.push(formatDirectiveAck(`Progress mode set to ${directives.progressMode}.`));
+    parts.push(formatProgressUpdatesAck(directives.progressMode));
   }
   if (directives.hasVerboseDirective && directives.verboseLevel) {
     parts.push(

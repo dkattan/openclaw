@@ -2115,10 +2115,11 @@ describe("dispatchReplyFromConfig", () => {
       expect(dispatcher.sendToolResult).toHaveBeenCalledTimes(1);
       expect(firstToolResultPayload(dispatcher)).toEqual(
         expect.objectContaining({
-          text: expect.stringContaining("current progress mode: native"),
+          text: expect.stringContaining("Working on it."),
         }),
       );
-      expect(firstToolResultPayload(dispatcher)?.text).toContain("/progress paced");
+      expect(firstToolResultPayload(dispatcher)?.text).toContain('reply "updates on"');
+      expect(firstToolResultPayload(dispatcher)?.text).not.toContain("progress mode");
 
       await vi.advanceTimersByTimeAsync(4_000);
       await dispatchPromise;
@@ -2227,12 +2228,13 @@ describe("dispatchReplyFromConfig", () => {
       await vi.advanceTimersByTimeAsync(7_000);
       expect(firstToolResultPayload(dispatcher)).toEqual(
         expect.objectContaining({
-          text: expect.stringContaining("current progress mode: native"),
+          text: expect.stringContaining("Working on it."),
           replyToId: "thread-root-1",
           replyToCurrent: true,
         }),
       );
-      expect(firstToolResultPayload(dispatcher)?.text).toContain("/progress paced");
+      expect(firstToolResultPayload(dispatcher)?.text).toContain('reply "updates on"');
+      expect(firstToolResultPayload(dispatcher)?.text).not.toContain("progress mode");
       expect(dispatcher.sendToolResult).toHaveBeenCalledTimes(1);
 
       await vi.advanceTimersByTimeAsync(4_000);
@@ -2308,7 +2310,7 @@ describe("dispatchReplyFromConfig", () => {
 
       expect((dispatcher.sendToolResult as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toEqual(
         expect.objectContaining({
-          text: expect.stringContaining("/progress paced"),
+          text: expect.stringContaining('reply "updates on"'),
         }),
       );
       expect((dispatcher.sendToolResult as ReturnType<typeof vi.fn>).mock.calls[1]?.[0]).toEqual(
@@ -2353,7 +2355,7 @@ describe("dispatchReplyFromConfig", () => {
 
       expect(firstToolResultPayload(dispatcher)).toEqual(
         expect.objectContaining({
-          text: expect.stringContaining("/progress paced"),
+          text: expect.stringContaining('reply "updates on"'),
         }),
       );
       expect(firstBlockReplyPayload(dispatcher)).toEqual(
@@ -2402,7 +2404,7 @@ describe("dispatchReplyFromConfig", () => {
         (mocks.routeReply.mock.calls[0]?.[0] as { payload?: ReplyPayload } | undefined)?.payload,
       ).toEqual(
         expect.objectContaining({
-          text: expect.stringContaining("/progress paced"),
+          text: expect.stringContaining('reply "updates on"'),
         }),
       );
       expect(
