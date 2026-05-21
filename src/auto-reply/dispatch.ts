@@ -33,6 +33,8 @@ import type { GetReplyOptions, ReplyPayload } from "./types.js";
 type ForegroundReplyFenceState = {
   generation: number;
   activeDispatches: number;
+  stableGeneration: number;
+  tentativeGenerations: Set<number>;
 };
 
 type ForegroundReplyFenceSnapshot = {
@@ -86,9 +88,12 @@ function beginForegroundReplyFence(
   const state = foregroundReplyFenceByKey.get(key) ?? {
     generation: 0,
     activeDispatches: 0,
+    stableGeneration: 0,
+    tentativeGenerations: new Set<number>(),
   };
   state.generation += 1;
   state.activeDispatches += 1;
+  state.tentativeGenerations.add(state.generation);
   foregroundReplyFenceByKey.set(key, state);
   return {
     key,
@@ -99,16 +104,35 @@ function beginForegroundReplyFence(
 function isForegroundReplyFenceSuperseded(
   snapshot: ForegroundReplyFenceSnapshot | undefined,
 ): boolean {
-  return Boolean(
-    snapshot &&
-    (foregroundReplyFenceByKey.get(snapshot.key)?.generation ?? 0) !== snapshot.generation,
-  );
+  if (!snapshot) {
+    return false;
+  }
+  const state = foregroundReplyFenceByKey.get(snapshot.key);
+  if (!state) {
+    return false;
+  }
+  if (state.stableGeneration > snapshot.generation) {
+    return true;
+  }
+  for (const generation of state.tentativeGenerations) {
+    if (generation > snapshot.generation) {
+      return true;
+    }
+  }
+  return false;
 }
 
-function endForegroundReplyFence(snapshot: ForegroundReplyFenceSnapshot): void {
+function endForegroundReplyFence(
+  snapshot: ForegroundReplyFenceSnapshot,
+  options?: { restoreGeneration?: boolean },
+): void {
   const state = foregroundReplyFenceByKey.get(snapshot.key);
   if (!state) {
     return;
+  }
+  state.tentativeGenerations.delete(snapshot.generation);
+  if (!options?.restoreGeneration && snapshot.generation > state.stableGeneration) {
+    state.stableGeneration = snapshot.generation;
   }
   state.activeDispatches -= 1;
   if (state.activeDispatches <= 0) {
@@ -289,6 +313,9 @@ export async function dispatchInboundMessageWithBufferedDispatcher(params: {
 }): Promise<DispatchInboundResult> {
   const finalized = finalizeInboundContext(params.ctx);
   const foregroundReplyFence = beginForegroundReplyFence(finalized);
+  const foregroundReplyHandoffRef = params.replyOptions?.foregroundReplyHandoffRef ?? {
+    value: false,
+  };
   const silentReplyContext = resolveDispatcherSilentReplyContext(finalized, params.cfg);
   const configuredBeforeDeliver =
     params.dispatcherOptions.beforeDeliver ?? buildMessageSendingBeforeDeliver(finalized);
@@ -322,11 +349,14 @@ export async function dispatchInboundMessageWithBufferedDispatcher(params: {
       replyOptions: {
         ...params.replyOptions,
         ...replyOptions,
+        foregroundReplyHandoffRef,
       },
     });
   } finally {
     if (foregroundReplyFence) {
-      endForegroundReplyFence(foregroundReplyFence);
+      endForegroundReplyFence(foregroundReplyFence, {
+        restoreGeneration: foregroundReplyHandoffRef.value,
+      });
     }
     markRunComplete();
     markDispatchIdle();

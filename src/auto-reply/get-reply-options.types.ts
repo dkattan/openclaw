@@ -46,6 +46,12 @@ export type PartialReplyPayload = Pick<ReplyPayload, "text" | "mediaUrls"> & {
 };
 
 export type GetReplyOptions = {
+  /**
+   * Internal buffered-dispatch ownership marker.
+   * Set when this inbound hands off user intent to an already-running turn or
+   * queued followup instead of owning foreground delivery itself.
+   */
+  foregroundReplyHandoffRef?: { value: boolean };
   /** Override run id for agent events (defaults to random UUID). */
   runId?: string;
   /** Abort signal for the underlying agent run. */

@@ -1167,6 +1167,9 @@ export async function runReplyAgent(params: {
       },
     );
     if (steerOutcome.queued) {
+      if (opts?.foregroundReplyHandoffRef) {
+        opts.foregroundReplyHandoffRef.value = true;
+      }
       await touchActiveSessionEntry();
       typing.cleanup();
       return undefined;
@@ -1202,6 +1205,9 @@ export async function runReplyAgent(params: {
   }
 
   if (activeRunQueueAction === "enqueue-followup") {
+    if (opts?.foregroundReplyHandoffRef) {
+      opts.foregroundReplyHandoffRef.value = true;
+    }
     enqueueFollowupRun(
       queueKey,
       followupRun,
