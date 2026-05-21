@@ -509,6 +509,9 @@ export async function dispatchInboundMessageWithBufferedDispatcher(params: {
 }): Promise<DispatchInboundResult> {
   const finalized = finalizeInboundContext(params.ctx);
   const foregroundReplyFence = beginForegroundReplyFence(finalized);
+  const foregroundReplyHandoffRef = params.replyOptions?.foregroundReplyHandoffRef ?? {
+    value: false,
+  };
   const silentReplyContext = resolveDispatcherSilentReplyContext(finalized, params.cfg);
   const replyPayloadBeforeDeliver = buildReplyPayloadSendingBeforeDeliver(finalized, {
     runId: params.replyOptions?.runId,
@@ -569,6 +572,7 @@ export async function dispatchInboundMessageWithBufferedDispatcher(params: {
       replyOptions: {
         ...params.replyOptions,
         ...replyOptions,
+        foregroundReplyHandoffRef,
       },
     });
   } finally {
