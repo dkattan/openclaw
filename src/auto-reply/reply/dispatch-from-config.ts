@@ -1570,6 +1570,8 @@ export async function dispatchReplyFromConfig(
     return mode;
   };
   const shouldUsePacedProgress = () => resolveProgressMode() === "paced";
+  const shouldUseFrozenOrInitialPacedProgress = () =>
+    (dispatchProgressMode ?? initialProgressMode) === "paced";
   const replyRoute = resolveEffectiveReplyRoute({ ctx, entry: sessionStoreEntry.entry });
   // Restore route thread context only from the active turn or the thread-scoped session key.
   // Do not read thread ids from the normalised session store here: `origin.threadId` can be
@@ -3011,6 +3013,36 @@ export async function dispatchReplyFromConfig(
         }
       };
     };
+    const onToolStart =
+      initialProgressMode === "paced"
+        ? async (payload: Parameters<NonNullable<typeof onToolStartFromReplyOptions>>[0]) => {
+            if (isDispatchOperationAborted()) {
+              return;
+            }
+            markProgress();
+            await waitForPendingDirectBlockReplyDelivery(dispatchAbortOperation?.abortSignal);
+            if (isDispatchOperationAborted()) {
+              return;
+            }
+            if (
+              shouldForwardProgressCallback({
+                forwardWhenSourceDeliverySuppressed: true,
+                requiresToolSummaryVisibility: true,
+              })
+            ) {
+              await onToolStartFromReplyOptions?.(payload);
+            }
+            const label = summarizeToolStartProgressLabel(payload);
+            if (label) {
+              await maybeSendPacedProgressDisabledNotice("tool_start");
+            }
+            notePacedProgress("tool_start", label);
+          }
+        : wrapProgressCallback(onToolStartFromReplyOptions, {
+            forwardWhenSourceDeliverySuppressed: true,
+            requiresToolSummaryVisibility: true,
+            waitForDirectBlockReplyDelivery: true,
+          });
 
     const replyResolver =
       params.replyResolver ??
