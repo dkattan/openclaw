@@ -122,6 +122,28 @@ export function extractAssistantVisibleText(msg: AssistantMessage): string {
   return extractAssistantTextForPhase(msg).text;
 }
 
+export function isUnphasedToolUsePreamble(msg: AssistantMessage): boolean {
+  if (normalizeAssistantPhase((msg as { phase?: unknown }).phase)) {
+    return false;
+  }
+  if ((msg as { stopReason?: unknown }).stopReason !== "toolUse") {
+    return false;
+  }
+  if (!Array.isArray(msg.content)) {
+    return false;
+  }
+  const hasToolCall = msg.content.some((block) => {
+    if (!block || typeof block !== "object") {
+      return false;
+    }
+    return (block as { type?: unknown }).type === "toolCall";
+  });
+  if (!hasToolCall) {
+    return false;
+  }
+  return extractAssistantVisibleText(msg).trim().length > 0;
+}
+
 export function extractAssistantText(msg: AssistantMessage): string {
   const extracted =
     extractTextFromChatContent(msg.content, {

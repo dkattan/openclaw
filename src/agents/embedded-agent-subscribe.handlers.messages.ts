@@ -34,12 +34,16 @@ import {
   extractAssistantVisibleText,
   extractThinkingFromTaggedStream,
   extractThinkingFromTaggedText,
+  isUnphasedToolUsePreamble,
   promoteThinkingTagsToBlocks,
 } from "./embedded-agent-utils.js";
 import type { AgentEvent, AgentMessage } from "./runtime/index.js";
 
 function shouldSuppressAssistantVisibleOutput(message: AgentMessage | undefined): boolean {
-  return resolveAssistantMessagePhase(message) === "commentary";
+  return (
+    resolveAssistantMessagePhase(message) === "commentary" ||
+    (message?.role === "assistant" && isUnphasedToolUsePreamble(message))
+  );
 }
 
 function isTranscriptOnlyOpenClawAssistantMessage(message: AgentMessage | undefined): boolean {
