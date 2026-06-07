@@ -1,8 +1,4 @@
 import { spawn } from "node:child_process";
-import { constants, accessSync, readFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import os from "node:os";
-import path from "node:path";
 import {
   createMessageReceiptFromOutboundResults,
   type MessageReceipt,
@@ -15,7 +11,11 @@ import { kindFromMime, resolveOutboundAttachmentFromUrl } from "openclaw/plugin-
 import { requireRuntimeConfig } from "openclaw/plugin-sdk/plugin-config-runtime";
 import { convertMarkdownTables } from "openclaw/plugin-sdk/text-chunking";
 import { stripInlineDirectiveTagsForDelivery } from "openclaw/plugin-sdk/text-chunking";
-import { resolveIMessageAccount, type ResolvedIMessageAccount } from "./accounts.js";
+import {
+  isOpenBubblesIMessageAccount,
+  resolveIMessageAccount,
+  type ResolvedIMessageAccount,
+} from "./accounts.js";
 import {
   appendIMessageApprovalReactionHintForOutboundMessage,
   extractIMessageApprovalPromptBinding,
@@ -25,8 +25,22 @@ import {
 import { appendIMessageCliStderrTail, appendIMessageCliStdout } from "./cli-output.js";
 import { createIMessageRpcClient, type IMessageRpcClient } from "./client.js";
 import { extractMarkdownFormatRuns } from "./markdown-format.js";
+import {
+  canResolveLatestSentMessageGuidFromChatDb,
+  isNumericMessageRowId,
+  loadNodeSqlite,
+  normalizeResolvedMessageGuid,
+  resolveChatDbLookupPath,
+  resolveIMessageReplyTargetGuid,
+  resolveMessageGuidFromChatDb,
+} from "./message-id-resolution.js";
 import { rememberIMessageReplyCache } from "./monitor-reply-cache.js";
 import { rememberPersistedIMessageEcho } from "./monitor/persisted-echo-cache.js";
+import {
+  isOpenBubblesBridgeSuccess,
+  resolveOpenBubblesBridgeError,
+  runOpenBubblesBridgeCommand,
+} from "./openbubbles-bridge.runtime.js";
 import {
   formatIMessageChatTarget,
   type IMessageService,
@@ -34,8 +48,19 @@ import {
   parseIMessageTarget,
 } from "./targets.js";
 
-const require = createRequire(import.meta.url);
 type ParsedIMessageTarget = ReturnType<typeof parseIMessageTarget>;
+
+type OpenBubblesBridgeSendCall = {
+  account: ResolvedIMessageAccount;
+  rawTarget: string;
+  text: string;
+  mediaFilePath?: string;
+  replyToId?: string;
+  service?: IMessageService;
+  region?: string;
+  formatting?: unknown;
+  timeoutMs?: number;
+};
 
 type IMessageSendOpts = {
   cliPath?: string;
@@ -73,6 +98,7 @@ type IMessageSendOpts = {
     text: string;
     sentAfterMs?: number;
   }) => Promise<string | null> | string | null;
+  sendViaOpenBubblesBridgeImpl?: (params: OpenBubblesBridgeSendCall) => Promise<Record<string, unknown>>;
 };
 
 export type IMessageSendResult = {
@@ -97,73 +123,6 @@ export type IMessageSendResult = {
 };
 
 const MAX_REPLY_TO_ID_LENGTH = 256;
-const sshWrapperCliPathCache = new Map<string, boolean>();
-
-function safeHomeDir(): string | undefined {
-  const home = process.env.HOME?.trim();
-  if (home) {
-    return home;
-  }
-  try {
-    return os.homedir().trim() || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function expandCliPathForInspection(cliPath: string): string {
-  if (!cliPath.startsWith("~")) {
-    return cliPath;
-  }
-  const home = safeHomeDir();
-  return home ? cliPath.replace(/^~(?=$|[\\/])/, home) : cliPath;
-}
-
-function isSshIMessageCliWrapper(cliPath: string): boolean {
-  if (cliPath === "imsg") {
-    return false;
-  }
-  const cached = sshWrapperCliPathCache.get(cliPath);
-  if (cached !== undefined) {
-    return cached;
-  }
-  let detected = false;
-  try {
-    const content = readFileSync(expandCliPathForInspection(cliPath), "utf8");
-    detected = /\bssh\b[\s\S]*\bimsg\b/u.test(content);
-  } catch {
-    detected = false;
-  }
-  // cliPath scripts are process-stable channel metadata; cache inspection so
-  // repeated sends do not poll wrapper files on the hot path.
-  sshWrapperCliPathCache.set(cliPath, detected);
-  return detected;
-}
-
-function isLocalIMessageCliPath(params: { cliPath: string; remoteHost?: string }): boolean {
-  const cliPath = params.cliPath.trim();
-  if (params.remoteHost?.trim() || isSshIMessageCliWrapper(cliPath)) {
-    return false;
-  }
-  return cliPath === "imsg" || path.basename(cliPath) === "imsg";
-}
-
-function resolveChatDbLookupPath(params: {
-  cliPath: string;
-  dbPath?: string;
-  remoteHost?: string;
-}): string | undefined {
-  const configured = params.dbPath?.trim();
-  if (configured) {
-    return configured;
-  }
-  if (!isLocalIMessageCliPath({ cliPath: params.cliPath, remoteHost: params.remoteHost })) {
-    return undefined;
-  }
-  const home = safeHomeDir();
-  return home ? path.join(home, "Library", "Messages", "chat.db") : undefined;
-}
-
 function stripUnsafeReplyTagChars(value: string): string {
   let next = "";
   for (const ch of value) {
@@ -230,57 +189,6 @@ function resolveOutboundMessageGuid(
     }
   }
   return null;
-}
-
-function isNumericMessageRowId(value: string | null | undefined): value is string {
-  return typeof value === "string" && /^\d+$/.test(value.trim());
-}
-
-function normalizeResolvedMessageGuid(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const trimmed = value.trim();
-  return trimmed && !isNumericMessageRowId(trimmed) ? trimmed : null;
-}
-
-function loadNodeSqlite(): typeof import("node:sqlite") | null {
-  try {
-    return require("node:sqlite") as typeof import("node:sqlite");
-  } catch {
-    return null;
-  }
-}
-
-function resolveMessageGuidFromChatDb(params: {
-  dbPath?: string;
-  messageId: string;
-}): string | null {
-  const dbPath = params.dbPath?.trim();
-  const messageId = params.messageId.trim();
-  if (!dbPath || !isNumericMessageRowId(messageId)) {
-    return null;
-  }
-  const sqlite = loadNodeSqlite();
-  if (!sqlite) {
-    return null;
-  }
-  let db: import("node:sqlite").DatabaseSync | null = null;
-  try {
-    db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
-    const row = db.prepare("SELECT guid FROM message WHERE ROWID = ?").get(messageId) as
-      | { guid?: unknown }
-      | undefined;
-    return normalizeResolvedMessageGuid(row?.guid);
-  } catch {
-    return null;
-  } finally {
-    try {
-      db?.close();
-    } catch {
-      // best-effort cleanup
-    }
-  }
 }
 
 function getStringRowValue(row: Record<string, unknown> | undefined, key: string): string | null {
@@ -360,19 +268,6 @@ function resolveLatestSentMessageGuidFromChatDb(params: {
     } catch {
       // best-effort cleanup
     }
-  }
-}
-
-function canResolveLatestSentMessageGuidFromChatDb(dbPath?: string): boolean {
-  const normalizedDbPath = dbPath?.trim();
-  if (!normalizedDbPath || !loadNodeSqlite()) {
-    return false;
-  }
-  try {
-    accessSync(normalizedDbPath, constants.R_OK);
-    return true;
-  } catch {
-    return false;
   }
 }
 
@@ -777,6 +672,121 @@ async function trySendAttachmentForExplicitChat(params: {
   };
 }
 
+async function sendMessageViaOpenBubbles(params: {
+  account: ResolvedIMessageAccount;
+  rawTarget: string;
+  target: ParsedIMessageTarget;
+  message: string;
+  filePath?: string;
+  echoText: string;
+  replyToId?: string;
+  service?: IMessageService;
+  region?: string;
+  formatting?: { text: string; ranges: unknown[] };
+  timeoutMs?: number;
+  sendViaOpenBubblesBridgeImpl?: IMessageSendOpts["sendViaOpenBubblesBridgeImpl"];
+}): Promise<IMessageSendResult> {
+  const sendViaOpenBubblesBridge =
+    params.sendViaOpenBubblesBridgeImpl ??
+    (async (callParams: OpenBubblesBridgeSendCall) =>
+      await runOpenBubblesBridgeCommand({
+        account: callParams.account,
+        command: "send",
+        payload: {
+          rawTarget: callParams.rawTarget,
+          text: callParams.text,
+          ...(callParams.mediaFilePath ? { mediaFilePath: callParams.mediaFilePath } : {}),
+          ...(callParams.replyToId ? { replyToId: callParams.replyToId } : {}),
+          ...(callParams.service ? { service: callParams.service } : {}),
+          ...(callParams.region ? { region: callParams.region } : {}),
+          ...(callParams.formatting ? { formatting: callParams.formatting } : {}),
+        },
+        timeoutMs: callParams.timeoutMs,
+      }));
+
+  const result = await sendViaOpenBubblesBridge({
+    account: params.account,
+    rawTarget: params.rawTarget,
+    text: params.message,
+    ...(params.filePath ? { mediaFilePath: params.filePath } : {}),
+    ...(params.replyToId ? { replyToId: params.replyToId } : {}),
+    ...(params.service ? { service: params.service } : {}),
+    ...(params.region ? { region: params.region } : {}),
+    ...(params.formatting?.ranges.length ? { formatting: params.formatting.ranges } : {}),
+    timeoutMs: params.timeoutMs,
+  });
+  if (!isOpenBubblesBridgeSuccess(result)) {
+    throw new Error(
+      resolveOpenBubblesBridgeError(result, "iMessage send failed via OpenBubbles bridge."),
+    );
+  }
+
+  const resolvedId = resolveMessageId(result);
+  const messageId =
+    resolvedId ?? (result?.ok || result?.success || result?.status === "sent" ? "ok" : "unknown");
+  const approvalBindingMessageId =
+    resolveOutboundMessageGuid(result) ??
+    (resolvedId && !isNumericMessageRowId(resolvedId) ? resolvedId : undefined);
+
+  const echoScope = resolveOutboundEchoScope({
+    accountId: params.account.accountId,
+    target: params.target,
+  });
+  if (echoScope) {
+    rememberPersistedIMessageEcho({
+      scope: echoScope,
+      text: params.echoText,
+      messageId: resolvedId ?? undefined,
+    });
+  }
+  if (resolvedId) {
+    rememberIMessageReplyCache({
+      accountId: params.account.accountId,
+      messageId: resolvedId,
+      chatGuid: params.target.kind === "chat_guid" ? params.target.chatGuid : undefined,
+      chatIdentifier:
+        params.target.kind === "chat_identifier"
+          ? params.target.chatIdentifier
+          : params.target.kind === "handle"
+            ? `${params.target.service === "sms" ? "SMS" : "iMessage"};-;${params.target.to}`
+            : undefined,
+      chatId: params.target.kind === "chat_id" ? params.target.chatId : undefined,
+      timestamp: Date.now(),
+      isFromMe: true,
+    });
+  }
+  if (params.message && approvalBindingMessageId) {
+    const handleForKey =
+      params.target.kind === "handle" ? normalizeIMessageHandle(params.target.to) : undefined;
+    const conversation: IMessageApprovalConversationKey = {
+      ...(params.target.kind === "chat_guid" ? { chatGuid: params.target.chatGuid } : {}),
+      ...(params.target.kind === "chat_identifier"
+        ? { chatIdentifier: params.target.chatIdentifier }
+        : {}),
+      ...(params.target.kind === "chat_id" ? { chatId: params.target.chatId } : {}),
+      ...(handleForKey ? { handle: handleForKey } : {}),
+    };
+    registerIMessageApprovalReactionTargetForOutboundMessage({
+      accountId: params.account.accountId,
+      conversation,
+      messageId: approvalBindingMessageId,
+      text: params.message,
+    });
+  }
+  return {
+    messageId,
+    ...(approvalBindingMessageId ? { guid: approvalBindingMessageId } : {}),
+    sentText: params.message,
+    ...(params.echoText ? { echoText: params.echoText } : {}),
+    receipt: createIMessageSendReceipt({
+      messageId,
+      target: params.target,
+      kind: params.filePath ? "media" : "text",
+      ...(params.replyToId ? { replyToId: params.replyToId } : {}),
+    }),
+  };
+}
+
 export async function sendMessageIMessage(
   to: string,
   text: string,
@@ -789,14 +799,8 @@ export async function sendMessageIMessage(
       cfg,
       accountId: opts.accountId,
     });
-  const cliPath = opts.cliPath?.trim() || account.config.cliPath?.trim() || "imsg";
-  const dbPath = opts.dbPath?.trim() || account.config.dbPath?.trim();
-  const chatDbLookupPath = resolveChatDbLookupPath({
-    cliPath,
-    dbPath,
-    remoteHost: account.config.remoteHost,
-  });
-  const target = parseIMessageTarget(opts.chatId ? formatIMessageChatTarget(opts.chatId) : to);
+  const rawTarget = opts.chatId ? formatIMessageChatTarget(opts.chatId) : to;
+  const target = parseIMessageTarget(rawTarget);
   const service =
     opts.service ??
     (target.kind === "handle" ? target.service : undefined) ??
@@ -849,7 +853,35 @@ export async function sendMessageIMessage(
     throw new Error("iMessage send requires text or media");
   }
   const echoText = resolveOutboundEchoText(message, filePath ? mediaContentType : undefined);
-  const resolvedReplyToId = sanitizeReplyToId(opts.replyToId);
+  const sanitizedReplyToId = sanitizeReplyToId(opts.replyToId);
+  if (isOpenBubblesIMessageAccount(account)) {
+    return await sendMessageViaOpenBubbles({
+      account,
+      rawTarget,
+      target,
+      message,
+      ...(filePath ? { filePath } : {}),
+      echoText,
+      ...(sanitizedReplyToId ? { replyToId: sanitizedReplyToId } : {}),
+      ...(service ? { service } : {}),
+      region,
+      formatting: formatted,
+      timeoutMs: opts.timeoutMs,
+      sendViaOpenBubblesBridgeImpl: opts.sendViaOpenBubblesBridgeImpl,
+    });
+  }
+  const cliPath = opts.cliPath?.trim() || account.config.cliPath?.trim() || "imsg";
+  const dbPath = opts.dbPath?.trim() || account.config.dbPath?.trim();
+  const chatDbLookupPath = resolveChatDbLookupPath({
+    cliPath,
+    dbPath,
+    remoteHost: account.config.remoteHost,
+  });
+  const resolvedReplyToId =
+    resolveIMessageReplyTargetGuid({
+      messageId: sanitizedReplyToId,
+      dbPath: chatDbLookupPath,
+    }) ?? sanitizedReplyToId;
   const runCliJson =
     opts.runCliJson ??
     ((args: readonly string[]) => runIMessageCliJson(cliPath, dbPath, args, opts.timeoutMs));

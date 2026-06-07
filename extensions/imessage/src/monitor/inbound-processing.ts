@@ -29,7 +29,12 @@ import { resolveAgentRoute } from "openclaw/plugin-sdk/routing";
 import { uniqueStrings } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { sanitizeTerminalText } from "openclaw/plugin-sdk/text-chunking";
 import { truncateUtf16Safe } from "openclaw/plugin-sdk/text-utility-runtime";
+import { resolveIMessageAccount } from "../accounts.js";
 import { resolveIMessageConversationRoute } from "../conversation-route.js";
+import {
+  resolveChatDbLookupPath,
+  resolveIMessageReplyTargetGuid,
+} from "../message-id-resolution.js";
 import {
   isKnownFromMeIMessageMessageId,
   rememberIMessageReplyCache,
@@ -830,10 +835,30 @@ export async function buildIMessageInboundContext(params: {
 }> {
   const envelopeOptions = params.envelopeOptions ?? resolveEnvelopeFormatOptions(params.cfg);
   const { decision } = params;
+  const account = resolveIMessageAccount({
+    cfg: params.cfg,
+    accountId: decision.route.accountId,
+  });
+  const chatDbLookupPath = resolveChatDbLookupPath({
+    cliPath: account.config.cliPath?.trim() || "imsg",
+    dbPath: account.config.dbPath?.trim(),
+    remoteHost: account.config.remoteHost,
+  });
   const chatId = decision.chatId;
   const chatTarget =
     decision.isGroup && chatId != null ? formatIMessageChatTarget(chatId) : undefined;
-  const messageGuid = normalizeReplyField(params.message.guid);
+  const messageGuid =
+    normalizeReplyField(params.message.guid) ??
+    resolveIMessageReplyTargetGuid({
+      messageId: params.message.id != null ? String(params.message.id) : undefined,
+      dbPath: chatDbLookupPath,
+    });
+  const replyContextFullId = decision.replyContext?.id
+    ? resolveIMessageReplyTargetGuid({
+        messageId: decision.replyContext.id,
+        dbPath: chatDbLookupPath,
+      })
+    : undefined;
   const rememberedMessage = messageGuid
     ? rememberIMessageReplyCache({
         accountId: decision.route.accountId,
@@ -930,6 +955,7 @@ export async function buildIMessageInboundContext(params: {
       quote: decision.replyContext
         ? {
             id: decision.replyContext.id,
+            fullId: replyContextFullId,
             body: decision.replyContext.body,
             sender: decision.replyContext.sender,
           }

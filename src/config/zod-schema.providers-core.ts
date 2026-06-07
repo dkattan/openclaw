@@ -1372,6 +1372,33 @@ const IMessageActionSchema = z
   .strict()
   .optional();
 
+const IMessageOpenBubblesSchema = z
+  .object({
+    bridgePath: ExecutableTokenSchema.optional(),
+    stateDir: z.string().optional(),
+  })
+  .strict()
+  .optional();
+
+function requireIMessageOpenBubblesStateDir(params: {
+  value: { backend?: "imsg" | "openbubbles"; openbubbles?: { stateDir?: string } };
+  ctx: z.RefinementCtx;
+  pathPrefix: (string | number)[];
+  message: string;
+}): void {
+  if (params.value.backend !== "openbubbles") {
+    return;
+  }
+  if (params.value.openbubbles?.stateDir?.trim()) {
+    return;
+  }
+  params.ctx.addIssue({
+    code: z.ZodIssueCode.custom,
+    path: [...params.pathPrefix, "openbubbles", "stateDir"],
+    message: params.message,
+  });
+}
+
 export const IMessageAccountSchemaBase = z
   .object({
     name: z.string().optional(),
@@ -1379,8 +1406,10 @@ export const IMessageAccountSchemaBase = z
     markdown: MarkdownConfigSchema,
     enabled: z.boolean().optional(),
     configWrites: z.boolean().optional(),
+    backend: z.enum(["imsg", "openbubbles"]).optional(),
     cliPath: ExecutableTokenSchema.optional(),
     dbPath: z.string().optional(),
+    openbubbles: IMessageOpenBubblesSchema,
     remoteHost: z
       .string()
       .refine(isSafeScpRemoteHost, "expected SSH host or user@host (no spaces/options)")
@@ -1452,6 +1481,13 @@ export const IMessageConfigSchema = IMessageAccountSchemaBase.extend({
   accounts: z.record(z.string(), IMessageAccountSchema.optional()).optional(),
   defaultAccount: z.string().optional(),
 }).superRefine((value, ctx) => {
+  requireIMessageOpenBubblesStateDir({
+    value,
+    ctx,
+    pathPrefix: [],
+    message:
+      'channels.imessage.backend="openbubbles" requires channels.imessage.openbubbles.stateDir',
+  });
   requireOpenAllowFrom({
     policy: value.dmPolicy,
     allowFrom: value.allowFrom,
@@ -1476,6 +1512,13 @@ export const IMessageConfigSchema = IMessageAccountSchemaBase.extend({
     if (!account) {
       continue;
     }
+    requireIMessageOpenBubblesStateDir({
+      value: account,
+      ctx,
+      pathPrefix: ["accounts", accountId],
+      message:
+        'channels.imessage.accounts.*.backend="openbubbles" requires channels.imessage.accounts.*.openbubbles.stateDir',
+    });
     const effectivePolicy = account.dmPolicy ?? value.dmPolicy;
     const effectiveAllowFrom = account.allowFrom ?? value.allowFrom;
     requireOpenAllowFrom({

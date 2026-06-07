@@ -3,7 +3,7 @@ import type {
   ChannelMessageActionAdapter,
   ChannelMessageActionName,
 } from "openclaw/plugin-sdk/channel-contract";
-import { resolveIMessageAccount } from "./accounts.js";
+import { isOpenBubblesIMessageAccount, resolveIMessageAccount } from "./accounts.js";
 import { IMESSAGE_ACTION_NAMES, IMESSAGE_ACTIONS } from "./actions-contract.js";
 import { getCachedIMessagePrivateApiStatus } from "./private-api-status.js";
 import { inferIMessageTargetChatType } from "./targets.js";
@@ -38,9 +38,16 @@ export function describeIMessageMessageTool({
   if (!account.enabled || !account.configured) {
     return null;
   }
+  const gate = createActionGate(account.config.actions);
+  if (isOpenBubblesIMessageAccount(account)) {
+    const actions = ["edit", "unsend"].filter((action) => {
+      const spec = IMESSAGE_ACTIONS[action];
+      return Boolean(spec?.gate && gate(spec.gate));
+    });
+    return { actions };
+  }
   const cliPath = account.config.cliPath?.trim() || "imsg";
   const privateApiStatus = getCachedIMessagePrivateApiStatus(cliPath);
-  const gate = createActionGate(account.config.actions);
   const actions = new Set<ChannelMessageActionName>();
   for (const action of IMESSAGE_ACTION_NAMES) {
     const spec = IMESSAGE_ACTIONS[action];

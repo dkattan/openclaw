@@ -15,7 +15,7 @@ import { createLazyRuntimeNamedExport } from "openclaw/plugin-sdk/lazy-runtime";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { normalizeOptionalLowercaseString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { extractToolSend } from "openclaw/plugin-sdk/tool-send";
-import { resolveIMessageAccount } from "./accounts.js";
+import { isOpenBubblesIMessageAccount, resolveIMessageAccount } from "./accounts.js";
 import { IMESSAGE_ACTION_NAMES, IMESSAGE_ACTIONS } from "./actions-contract.js";
 import { DEFAULT_IMESSAGE_PROBE_TIMEOUT_MS } from "./constants.js";
 import { describeIMessageMessageTool } from "./message-tool-api.js";
@@ -24,6 +24,11 @@ import {
   rememberIMessageReplyCache,
   type IMessageChatContext,
 } from "./monitor-reply-cache.js";
+import {
+  isOpenBubblesBridgeSuccess,
+  resolveOpenBubblesBridgeError,
+  runOpenBubblesBridgeCommand,
+} from "./openbubbles-bridge.runtime.js";
 import { getCachedIMessagePrivateApiStatus } from "./probe.js";
 import { parseIMessageTarget, type IMessageTarget } from "./targets.js";
 
@@ -232,6 +237,29 @@ function buildChatContextFromActionParams(params: {
   };
 }
 
+function resolveRawActionTarget(params: {
+  actionParams: Record<string, unknown>;
+  currentChannelId?: string;
+}): string | undefined {
+  const explicitChatGuid = readStringParam(params.actionParams, "chatGuid");
+  if (explicitChatGuid) {
+    return `chat_guid:${explicitChatGuid}`;
+  }
+  const explicitChatId = readPositiveIntegerParam(params.actionParams, "chatId");
+  if (typeof explicitChatId === "number") {
+    return `chat_id:${String(explicitChatId)}`;
+  }
+  const explicitChatIdentifier = readStringParam(params.actionParams, "chatIdentifier");
+  if (explicitChatIdentifier) {
+    return `chat_identifier:${explicitChatIdentifier}`;
+  }
+  return (
+    readStringParam(params.actionParams, "to") ??
+    readStringParam(params.actionParams, "target") ??
+    (params.currentChannelId?.trim() || undefined)
+  );
+}
+
 function mapTapbackReaction(emoji?: string): string | undefined {
   const value = normalizeOptionalLowercaseString(emoji)?.replace(/\ufe0f/g, "");
   if (!value) {
@@ -409,6 +437,81 @@ export const imessageMessageActions: ChannelMessageActionAdapter = {
       accountId: accountId ?? undefined,
     });
     assertActionEnabled(action, account.config.actions);
+    const chatContext = buildChatContextFromActionParams({
+      actionParams: params,
+      currentChannelId: toolContext?.currentChannelId,
+    });
+    const fallbackContext = { ...chatContext, accountId: account.accountId };
+    const messageId = (resolveOpts?: { requireFromMe?: boolean }) =>
+      runtime.resolveIMessageMessageId(readMessageIdWithChatFallback(params, fallbackContext), {
+        requireKnownShortId: true,
+        chatContext,
+        ...(resolveOpts?.requireFromMe ? { requireFromMe: true } : {}),
+      });
+    if (isOpenBubblesIMessageAccount(account)) {
+      const rawTarget = resolveRawActionTarget({
+        actionParams: params,
+        currentChannelId: toolContext?.currentChannelId,
+      });
+      if (action !== "edit" && action !== "unsend") {
+        throw new Error(
+          `iMessage ${action} is not supported for backend=openbubbles yet. Use backend=imsg for private API actions beyond edit/unsend.`,
+        );
+      }
+      if (!rawTarget) {
+        throw new Error(
+          `iMessage ${action} via OpenBubbles requires chatGuid, chatId, chatIdentifier, to, target, or currentChannelId.`,
+        );
+      }
+      if (action === "edit") {
+        const resolvedMessageId = messageId({ requireFromMe: true });
+        const text =
+          readStringParam(params, "text") ??
+          readStringParam(params, "newText") ??
+          readStringParam(params, "message");
+        if (!text) {
+          throw new Error("iMessage edit requires text, newText, or message.");
+        }
+        const partIndex = readNonNegativeIntegerParam(params, "partIndex");
+        const backwardsCompatMessage = readStringParam(params, "backwardsCompatMessage");
+        const result = await runOpenBubblesBridgeCommand({
+          account,
+          command: "edit",
+          payload: {
+            rawTarget,
+            messageId: resolvedMessageId,
+            text,
+            ...(typeof partIndex === "number" ? { partIndex } : {}),
+            ...(backwardsCompatMessage ? { backwardsCompatMessage } : {}),
+          },
+          timeoutMs: account.config.probeTimeoutMs,
+        });
+        if (!isOpenBubblesBridgeSuccess(result)) {
+          throw new Error(
+            resolveOpenBubblesBridgeError(result, "iMessage edit failed via OpenBubbles bridge."),
+          );
+        }
+        return jsonResult({ ok: true, edited: resolvedMessageId });
+      }
+      const resolvedMessageId = messageId({ requireFromMe: true });
+      const partIndex = readNonNegativeIntegerParam(params, "partIndex");
+      const result = await runOpenBubblesBridgeCommand({
+        account,
+        command: "unsend",
+        payload: {
+          rawTarget,
+          messageId: resolvedMessageId,
+          ...(typeof partIndex === "number" ? { partIndex } : {}),
+        },
+        timeoutMs: account.config.probeTimeoutMs,
+      });
+      if (!isOpenBubblesBridgeSuccess(result)) {
+        throw new Error(
+          resolveOpenBubblesBridgeError(result, "iMessage unsend failed via OpenBubbles bridge."),
+        );
+      }
+      return jsonResult({ ok: true, unsent: resolvedMessageId });
+    }
     const cliPathForProbe = account.config.cliPath?.trim() || "imsg";
     let privateApiStatus = getCachedIMessagePrivateApiStatus(cliPathForProbe);
     const assertPrivateApiEnabled = async () => {
@@ -452,21 +555,6 @@ export const imessageMessageActions: ChannelMessageActionAdapter = {
         runtime,
         options: opts,
       });
-    const messageId = (resolveOpts?: { requireFromMe?: boolean }) => {
-      const chatContext = buildChatContextFromActionParams({
-        actionParams: params,
-        currentChannelId: toolContext?.currentChannelId,
-      });
-      const fallbackContext = { ...chatContext, accountId: account.accountId };
-      return runtime.resolveIMessageMessageId(
-        readMessageIdWithChatFallback(params, fallbackContext),
-        {
-          requireKnownShortId: true,
-          chatContext,
-          ...(resolveOpts?.requireFromMe ? { requireFromMe: true } : {}),
-        },
-      );
-    };
 
     if (action === "react") {
       await assertPrivateApiEnabled();

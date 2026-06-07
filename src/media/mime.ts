@@ -52,6 +52,8 @@ const EXT_BY_MIME: Record<string, string> = {
   "text/csv": ".csv",
   "text/plain": ".txt",
   "text/markdown": ".md",
+  "text/vcard": ".vcf",
+  "text/x-vcard": ".vcf",
   "text/html": ".html",
   "text/xml": ".xml",
   "text/css": ".css",
@@ -78,6 +80,8 @@ const MIME_BY_EXT: Record<string, string> = {
   ".js": "text/javascript",
   ".log": "text/plain",
   ".htm": "text/html",
+  ".vcf": "text/vcard",
+  ".vcard": "text/vcard",
   ".xml": "text/xml",
 };
 

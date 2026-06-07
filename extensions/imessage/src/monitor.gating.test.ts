@@ -1,6 +1,6 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { beforeEach, describe, expect, it } from "vitest";
-import { resetIMessageShortIdState } from "./monitor-reply-cache.js";
+import { rememberIMessageReplyCache, resetIMessageShortIdState } from "./monitor-reply-cache.js";
 import {
   buildIMessageInboundContext,
   resolveIMessageInboundDecision,
@@ -214,6 +214,33 @@ describe("imessage monitor gating + envelope builders", () => {
     expect(ctxPayload.ReplyToSender).toBe("+15559998888");
     expect(ctxPayload.Body ?? "").toContain("[Replying to +15559998888 id:9001]");
     expect(ctxPayload.Body ?? "").toContain("original message");
+  });
+
+  it("hydrates ReplyToIdFull from a cached short reply id", async () => {
+    const cfg = baseCfg();
+    const issued = rememberIMessageReplyCache({
+      accountId: "default",
+      messageId: "p:0/quoted-guid",
+      chatId: 55,
+      timestamp: Date.now(),
+      isFromMe: true,
+    });
+    const message: IMessagePayload = {
+      id: 7,
+      chat_id: 55,
+      sender: "+15550001111",
+      is_from_me: false,
+      text: "replying now",
+      is_group: false,
+      reply_to_id: issued.shortId,
+      reply_to_text: "original message",
+      reply_to_sender: "+15559998888",
+    };
+
+    const ctxPayload = await buildDispatchContextPayload({ cfg, message });
+
+    expect(ctxPayload.ReplyToId).toBe(issued.shortId);
+    expect(ctxPayload.ReplyToIdFull).toBe("p:0/quoted-guid");
   });
 
   it("drops group reply context from non-allowlisted senders in allowlist mode", async () => {

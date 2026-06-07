@@ -105,4 +105,34 @@ describe("startIMessageGatewayAccount duplicate-source handling", () => {
     await startIMessageGatewayAccount(ctx);
     expect(monitorMock).toHaveBeenCalledTimes(1);
   });
+
+  it("parks OpenBubbles-backed accounts instead of starting monitorIMessageProvider", async () => {
+    monitorMock.mockClear();
+    const cfg = {
+      channels: {
+        imessage: {
+          accounts: {
+            darren: {
+              backend: "openbubbles",
+              openbubbles: { stateDir: "/tmp/openbubbles-state" },
+            },
+          },
+        },
+      },
+    } as never;
+    const { ctx, abort, logEvents } = makeCtx({ cfg, accountId: "darren" });
+
+    const settled = vi.fn();
+    const task = startIMessageGatewayAccount(ctx).then(settled);
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(monitorMock).not.toHaveBeenCalled();
+    expect(settled).not.toHaveBeenCalled();
+    expect(logEvents.some((e) => e.line.includes("OpenBubbles backend"))).toBe(true);
+
+    abort();
+    await task;
+    expect(settled).toHaveBeenCalled();
+  });
 });
