@@ -1,6 +1,6 @@
 import type { ExecAsk, ExecSecurity, ExecTarget } from "../../infra/exec-approvals.js";
 import { extractModelDirective } from "../model.js";
-import { isSessionDefaultDirectiveValue } from "../thinking.js";
+import { isSessionDefaultDirectiveValue, type ProgressMode } from "../thinking.js";
 import type {
   ElevatedLevel,
   ReasoningLevel,
@@ -12,6 +12,7 @@ import {
   extractElevatedDirective,
   extractExecDirective,
   extractFastDirective,
+  extractProgressDirective,
   extractReasoningDirective,
   extractStatusDirective,
   extractTraceDirective,
@@ -37,6 +38,9 @@ export type InlineDirectives = {
   fastMode?: boolean;
   rawFastMode?: string;
   clearFastMode: boolean;
+  hasProgressDirective: boolean;
+  progressMode?: ProgressMode;
+  rawProgressMode?: string;
   hasReasoningDirective: boolean;
   reasoningLevel?: ReasoningLevel;
   rawReasoningLevel?: string;
@@ -108,11 +112,17 @@ export function parseInlineDirectives(
     hasDirective: hasFastDirective,
   } = extractFastDirective(traceCleaned);
   const {
+    cleaned: progressCleaned,
+    progressMode,
+    rawLevel: rawProgressMode,
+    hasDirective: hasProgressDirective,
+  } = extractProgressDirective(fastCleaned);
+  const {
     cleaned: reasoningCleaned,
     reasoningLevel,
     rawLevel: rawReasoningLevel,
     hasDirective: hasReasoningDirective,
-  } = extractReasoningDirective(fastCleaned);
+  } = extractReasoningDirective(progressCleaned);
   const {
     cleaned: elevatedCleaned,
     elevatedLevel,
@@ -187,6 +197,9 @@ export function parseInlineDirectives(
     fastMode,
     rawFastMode,
     clearFastMode: hasFastDirective && isSessionDefaultDirectiveValue(rawFastMode),
+    hasProgressDirective,
+    progressMode,
+    rawProgressMode,
     hasReasoningDirective,
     reasoningLevel,
     rawReasoningLevel,

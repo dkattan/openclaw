@@ -651,6 +651,23 @@ describe("loadWebMedia", () => {
     expect(result.contentType).toBe("text/markdown");
   });
 
+  it("allows host-read vCard files", async () => {
+    const vcardFile = path.join(fixtureRoot, "contacts.vcf");
+    await fs.writeFile(
+      vcardFile,
+      "BEGIN:VCARD\nVERSION:3.0\nFN:Jane Example\nTEL:+15551234567\nEND:VCARD\n",
+      "utf8",
+    );
+    const result = await loadWebMedia(vcardFile, {
+      maxBytes: 1024 * 1024,
+      localRoots: "any",
+      readFile: async (filePath) => await fs.readFile(filePath),
+      hostReadCapability: true,
+    });
+    expect(result.kind).toBe("document");
+    expect(result.contentType).toBe("text/vcard");
+  });
+
   it("allows trusted generated host-read HTML reports under OpenClaw temp root", async () => {
     const htmlFile = path.join(fixtureRoot, "report.html");
     await fs.writeFile(htmlFile, "<!doctype html><title>Report</title><h1>Report</h1>\n", "utf8");
@@ -829,6 +846,7 @@ describe("loadWebMedia", () => {
     { label: "CSV", fileName: "opaque.csv" },
     { label: "HTML", fileName: "opaque.html" },
     { label: "Markdown", fileName: "opaque.md" },
+    { label: "vCard", fileName: "opaque.vcf" },
   ])("rejects opaque non-NUL binary data disguised as %s", async ({ fileName }) => {
     const fakeTextFile = path.join(fixtureRoot, fileName);
     const opaqueBinary = Buffer.alloc(9000);
@@ -851,6 +869,7 @@ describe("loadWebMedia", () => {
     { label: "CSV", fileName: "prefix-tail.csv" },
     { label: "HTML", fileName: "prefix-tail.html" },
     { label: "Markdown", fileName: "prefix-tail.md" },
+    { label: "vCard", fileName: "prefix-tail.vcf" },
   ])(
     "rejects %s files with a text prefix and binary tail after the old sample window",
     async ({ fileName }) => {

@@ -23,6 +23,10 @@ import {
   resolveOriginMessageTo,
 } from "./origin-routing.js";
 import { normalizeReplyPayloadDirectives } from "./reply-delivery.js";
+import {
+  buildReplyMediaNormalizationFailurePayload,
+  ReplyMediaNormalizationError,
+} from "./reply-media-paths.js";
 import { applyReplyThreading, isRenderablePayload } from "./reply-payloads-base.js";
 
 const replyPayloadsDedupeRuntimeLoader = createLazyImportLoader(
@@ -47,6 +51,12 @@ async function normalizeReplyPayloadMedia(params: {
     return copyReplyPayloadMetadata(params.payload, normalized);
   } catch (err) {
     logVerbose(`reply payload media normalization failed: ${String(err)}`);
+    if (err instanceof ReplyMediaNormalizationError) {
+      return copyReplyPayloadMetadata(
+        params.payload,
+        buildReplyMediaNormalizationFailurePayload(params.payload, err),
+      );
+    }
     return copyReplyPayloadMetadata(params.payload, {
       ...params.payload,
       text: params.suppressMediaFailureWarning
@@ -280,14 +290,15 @@ export async function buildReplyPayloads(params: {
       originatingAccountId: params.accountId,
     }),
   }) ?? {
-    shouldDedupePayloads: shouldCheckMessagingToolDedupe && messagingToolSentTargets.length === 0,
+    shouldDedupePayloads: false,
     matchingRoute: false,
     routeSentTexts: [],
     routeSentMediaUrls: [],
     useGlobalSentTextEvidenceFallback: false,
     useGlobalSentMediaUrlEvidenceFallback: false,
   };
-  const dedupeMessagingToolPayloads = messagingToolPayloadDedupe.shouldDedupePayloads;
+  const dedupeMessagingToolTextPayloads = messagingToolPayloadDedupe.shouldDedupePayloads;
+  const dedupeMessagingToolMediaPayloads = messagingToolPayloadDedupe.matchingRoute;
   const sentMediaUrlFallback = params.messagingToolSentMediaUrls ?? [];
   const shouldUseGlobalSentMediaUrlEvidence =
     messagingToolPayloadDedupe.matchingRoute &&
@@ -307,13 +318,13 @@ export async function buildReplyPayloads(params: {
       ? messagingToolSentTexts
       : messagingToolPayloadDedupe.routeSentTexts
     : messagingToolSentTexts;
-  const messagingToolSentMediaUrls = dedupeMessagingToolPayloads
+  const messagingToolSentMediaUrls = dedupeMessagingToolMediaPayloads
     ? await normalizeSentMediaUrlsForDedupe({
         sentMediaUrls: sentMediaUrlsForDedupe,
         normalizeMediaPaths: params.normalizeMediaPaths,
       })
     : sentMediaUrlsForDedupe;
-  const mediaFilteredPayloads = dedupeMessagingToolPayloads
+  const mediaFilteredPayloads = dedupeMessagingToolMediaPayloads
     ? (
         dedupeRuntime ?? (await loadReplyPayloadsDedupeRuntime())
       ).filterMessagingToolMediaDuplicates({
@@ -321,7 +332,7 @@ export async function buildReplyPayloads(params: {
         sentMediaUrls: messagingToolSentMediaUrls,
       })
     : silentFilteredPayloads;
-  const dedupedPayloads = dedupeMessagingToolPayloads
+  const dedupedPayloads = dedupeMessagingToolTextPayloads
     ? (dedupeRuntime ?? (await loadReplyPayloadsDedupeRuntime())).filterMessagingToolDuplicates({
         payloads: mediaFilteredPayloads,
         sentTexts: sentTextsForDedupe,

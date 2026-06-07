@@ -1,4 +1,5 @@
 export {
+  applyResolvedReplyTarget,
   applyReplyTagsToPayload,
   applyReplyThreading,
   formatBtwTextForExternalDelivery,

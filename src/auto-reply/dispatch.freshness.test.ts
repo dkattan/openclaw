@@ -609,6 +609,118 @@ describe("foreground reply freshness", () => {
     expect(settled).toBe(true);
   });
 
+  it("restores an older foreground final when a newer inbound hands off to the active run", async () => {
+    const deliveries: Delivery[] = [];
+    const olderStarted = createDeferred<void>();
+    const releaseOlderFinal = createDeferred<void>();
+
+    hoisted.dispatchReplyFromConfigMock.mockImplementation(
+      async (params: DispatchReplyFromConfigParams) => {
+        if (params.ctx.MessageSid === "old-message") {
+          olderStarted.resolve();
+          await releaseOlderFinal.promise;
+          params.dispatcher.sendFinalReply({ text: "old final" });
+          return queuedFinalResult();
+        }
+        if (params.ctx.MessageSid === "new-message") {
+          if (!params.replyOptions?.foregroundReplyHandoffRef) {
+            throw new Error("expected foreground reply handoff ref");
+          }
+          params.replyOptions.foregroundReplyHandoffRef.value = true;
+          return {
+            queuedFinal: false,
+            counts: { tool: 0, block: 0, final: 0 },
+          };
+        }
+        throw new Error(`unexpected test message ${params.ctx.MessageSid ?? "<missing>"}`);
+      },
+    );
+
+    const olderDispatch = dispatchWithDeliveries(
+      buildForegroundCtx({ MessageSid: "old-message" }),
+      deliveries,
+    );
+    await olderStarted.promise;
+
+    const newerResult = await dispatchWithDeliveries(
+      buildForegroundCtx({ MessageSid: "new-message" }),
+      deliveries,
+    );
+
+    releaseOlderFinal.resolve();
+    const olderResult = await olderDispatch;
+
+    expect(newerResult).toEqual({
+      queuedFinal: false,
+      counts: { tool: 0, block: 0, final: 0 },
+    });
+    expect(olderResult).toEqual({
+      queuedFinal: true,
+      counts: { tool: 0, block: 0, final: 1 },
+    });
+    expect(deliveries).toEqual([{ kind: "final", text: "old final" }]);
+  });
+
+  it("restores an older foreground final after multiple newer handoff inbounds", async () => {
+    const deliveries: Delivery[] = [];
+    const olderStarted = createDeferred<void>();
+    const releaseOlderFinal = createDeferred<void>();
+
+    hoisted.dispatchReplyFromConfigMock.mockImplementation(
+      async (params: DispatchReplyFromConfigParams) => {
+        if (params.ctx.MessageSid === "old-message") {
+          olderStarted.resolve();
+          await releaseOlderFinal.promise;
+          params.dispatcher.sendFinalReply({ text: "old final" });
+          return queuedFinalResult();
+        }
+        if (params.ctx.MessageSid === "handoff-1" || params.ctx.MessageSid === "handoff-2") {
+          if (!params.replyOptions?.foregroundReplyHandoffRef) {
+            throw new Error("expected foreground reply handoff ref");
+          }
+          params.replyOptions.foregroundReplyHandoffRef.value = true;
+          return {
+            queuedFinal: false,
+            counts: { tool: 0, block: 0, final: 0 },
+          };
+        }
+        throw new Error(`unexpected test message ${params.ctx.MessageSid ?? "<missing>"}`);
+      },
+    );
+
+    const olderDispatch = dispatchWithDeliveries(
+      buildForegroundCtx({ MessageSid: "old-message" }),
+      deliveries,
+    );
+    await olderStarted.promise;
+
+    const firstHandoff = await dispatchWithDeliveries(
+      buildForegroundCtx({ MessageSid: "handoff-1" }),
+      deliveries,
+    );
+    const secondHandoff = await dispatchWithDeliveries(
+      buildForegroundCtx({ MessageSid: "handoff-2" }),
+      deliveries,
+    );
+
+    releaseOlderFinal.resolve();
+    const olderResult = await olderDispatch;
+
+    expect(firstHandoff).toEqual({
+      queuedFinal: false,
+      counts: { tool: 0, block: 0, final: 0 },
+    });
+    expect(secondHandoff).toEqual({
+      queuedFinal: false,
+      counts: { tool: 0, block: 0, final: 0 },
+    });
+    expect(olderResult).toEqual({
+      queuedFinal: true,
+      counts: { tool: 0, block: 0, final: 1 },
+    });
+    expect(deliveries).toEqual([{ kind: "final", text: "old final" }]);
+  });
+
   it("keeps concurrent foreground finals isolated for different targets sharing a session", async () => {
     const deliveries: Delivery[] = [];
     const firstStarted = createDeferred<void>();

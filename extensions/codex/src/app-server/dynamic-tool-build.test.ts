@@ -406,6 +406,30 @@ describe("Codex app-server dynamic tool build", () => {
     }
   });
 
+  it("re-exposes exec when Codex native tools are disabled by a narrow allowlist", async () => {
+    setOpenClawCodingToolsFactoryForTests(() => [
+      createRuntimeDynamicTool("exec"),
+      createRuntimeDynamicTool("process"),
+      createRuntimeDynamicTool("message"),
+    ]);
+    const sessionFile = path.join(tempDir, "session.jsonl");
+    const workspaceDir = path.join(tempDir, "workspace");
+    const params = createParams(sessionFile, workspaceDir);
+    params.disableTools = false;
+    params.runtimePlan = createCodexRuntimePlanFixture();
+    params.toolsAllow = ["exec"];
+    const nativeToolSurfaceEnabled = shouldEnableCodexAppServerNativeToolSurface(params);
+
+    expect(nativeToolSurfaceEnabled).toBe(false);
+
+    const tools = await buildDynamicToolsForTest(params, workspaceDir, {
+      sandbox: null as never,
+      nativeToolSurfaceEnabled,
+    });
+
+    expect(tools.map((tool) => tool.name)).toEqual(["exec"]);
+  });
+
   it("points yielded sandbox_exec follow-up guidance at sandbox_process", async () => {
     const execTool = createRuntimeDynamicTool("exec");
     vi.mocked(execTool.execute).mockResolvedValueOnce({

@@ -20,7 +20,11 @@ import {
 } from "openclaw/plugin-sdk/setup-runtime";
 import { formatDocsLink } from "openclaw/plugin-sdk/setup-tools";
 import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
-import { resolveDefaultIMessageAccountId, resolveIMessageAccount } from "./accounts.js";
+import {
+  isOpenBubblesIMessageAccount,
+  resolveDefaultIMessageAccountId,
+  resolveIMessageAccount,
+} from "./accounts.js";
 import { normalizeIMessageHandle } from "./targets.js";
 
 const t = createSetupTranslator();
@@ -173,7 +177,12 @@ export function createIMessageCliPathTextInput(
     inputKey: "cliPath",
     message: "imsg CLI path",
     resolvePath: ({ cfg, accountId }) => resolveIMessageCliPath({ cfg, accountId }),
-    shouldPrompt,
+    shouldPrompt: async (params) => {
+      if (isOpenBubblesIMessageAccount(resolveIMessageAccount(params))) {
+        return false;
+      }
+      return await shouldPrompt(params);
+    },
     helpTitle: "iMessage",
     helpLines: ["imsg CLI path required to enable iMessage."],
   });
@@ -182,11 +191,11 @@ export function createIMessageCliPathTextInput(
 export const imessageCompletionNote = {
   title: "iMessage next steps",
   lines: [
-    "Run OpenClaw on the Mac signed into Messages, or set cliPath to an SSH wrapper that runs imsg on that Mac.",
+    "For backend=imsg: run OpenClaw on the Mac signed into Messages, or set cliPath to an SSH wrapper that runs imsg on that Mac.",
+    "For backend=openbubbles: set openbubbles.stateDir to the restored local OpenBubbles account state and point openbubbles.bridgePath at a compatible bridge executable.",
     "Linux/Windows hosts cannot run the default local imsg path directly.",
-    "Run `imsg launch`, then `openclaw channels status --probe` to verify private API actions.",
-    "Ensure OpenClaw has Full Disk Access to Messages DB.",
-    "Grant Automation permission for Messages when prompted.",
+    "For backend=imsg: run `imsg launch`, then `openclaw channels status --probe` to verify private API actions.",
+    "For backend=imsg: ensure OpenClaw has Full Disk Access to Messages DB and grant Automation permission for Messages when prompted.",
     "List chats with: imsg chats --limit 20",
     `Docs: ${formatDocsLink("/imessage", "imessage")}`,
   ],
@@ -200,8 +209,8 @@ export const imessageSetupAdapter: ChannelSetupAdapter = createPatchedAccountSet
 export const imessageSetupStatusBase = {
   configuredLabel: t("wizard.channels.statusConfigured"),
   unconfiguredLabel: t("wizard.channels.statusNeedsSetup"),
-  configuredHint: t("wizard.imessage.imsgFound"),
-  unconfiguredHint: t("wizard.imessage.imsgMissing"),
+  configuredHint: "iMessage backend configured",
+  unconfiguredHint: "Configure an iMessage backend",
   configuredScore: 1,
   unconfiguredScore: 0,
   resolveConfigured: ({ cfg, accountId }: { cfg: OpenClawConfig; accountId?: string }) =>

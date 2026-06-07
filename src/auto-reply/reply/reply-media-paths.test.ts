@@ -20,7 +20,10 @@ vi.mock("../../media/read-capability.js", () => ({
   resolveAgentScopedOutboundMediaAccess,
 }));
 
-import { createReplyMediaPathNormalizer } from "./reply-media-paths.js";
+import {
+  createReplyMediaPathNormalizer,
+  ReplyMediaNormalizationError,
+} from "./reply-media-paths.js";
 
 type NormalizedReply = {
   mediaUrl?: string;
@@ -173,7 +176,7 @@ describe("createReplyMediaPathNormalizer", () => {
     );
   });
 
-  it("drops sandbox-mapped media when staging fails instead of retrying the workspace fallback", async () => {
+  it("fails fast when sandbox-mapped media staging fails", async () => {
     ensureSandboxWorkspaceForSession.mockResolvedValue({
       workspaceDir: "/tmp/sandboxes/session-1",
       containerWorkdir: "/workspace",
@@ -185,36 +188,41 @@ describe("createReplyMediaPathNormalizer", () => {
       workspaceDir: "/tmp/agent-workspace",
     });
 
-    const result = await normalize({
-      mediaUrls: ["./out/photo.png"],
-    });
-
-    expectNoMedia(result);
+    await expect(
+      normalize({
+        mediaUrls: ["./out/photo.png"],
+      }),
+    ).rejects.toMatchObject({
+      name: "ReplyMediaNormalizationError",
+      failedMedia: ["./out/photo.png"],
+    } satisfies Partial<ReplyMediaNormalizationError>);
     expect(resolveOutboundAttachmentFromUrl).toHaveBeenCalledTimes(1);
     expectOutboundAttachmentCall(
       0,
       path.join("/tmp/sandboxes/session-1", "out", "photo.png"),
       5 * 1024 * 1024,
     );
-    expect(result.text).toBe("⚠️ Media failed.");
   });
 
-  it("drops host file URLs when no sandbox mapping applies", async () => {
+  it("fails fast for host file URLs when no sandbox mapping applies", async () => {
     const normalize = createReplyMediaPathNormalizer({
       cfg: {},
       sessionKey: "session-key",
       workspaceDir: "/tmp/agent-workspace",
     });
 
-    const result = await normalize({
-      mediaUrls: ["file:///Users/peter/Documents/report.pdf"],
-    });
-
-    expectNoMedia(result);
+    await expect(
+      normalize({
+        mediaUrls: ["file:///Users/peter/Documents/report.pdf"],
+      }),
+    ).rejects.toMatchObject({
+      name: "ReplyMediaNormalizationError",
+      failedMedia: ["file:///Users/peter/Documents/report.pdf"],
+    } satisfies Partial<ReplyMediaNormalizationError>);
     expect(resolveOutboundAttachmentFromUrl).not.toHaveBeenCalled();
   });
 
-  it("drops host file URLs even when sandbox exists", async () => {
+  it("fails fast for host file URLs even when sandbox exists", async () => {
     ensureSandboxWorkspaceForSession.mockResolvedValue({
       workspaceDir: "/tmp/sandboxes/session-1",
       containerWorkdir: "/workspace",
@@ -225,15 +233,18 @@ describe("createReplyMediaPathNormalizer", () => {
       workspaceDir: "/tmp/agent-workspace",
     });
 
-    const result = await normalize({
-      mediaUrls: ["file:///Users/peter/Documents/report.pdf"],
-    });
-
-    expectNoMedia(result);
+    await expect(
+      normalize({
+        mediaUrls: ["file:///Users/peter/Documents/report.pdf"],
+      }),
+    ).rejects.toMatchObject({
+      name: "ReplyMediaNormalizationError",
+      failedMedia: ["file:///Users/peter/Documents/report.pdf"],
+    } satisfies Partial<ReplyMediaNormalizationError>);
     expect(resolveOutboundAttachmentFromUrl).not.toHaveBeenCalled();
   });
 
-  it("drops absolute host-local media paths when sandbox mapping fails", async () => {
+  it("fails fast for absolute host-local media paths when sandbox mapping fails", async () => {
     ensureSandboxWorkspaceForSession.mockResolvedValue({
       workspaceDir: "/tmp/sandboxes/session-1",
       containerWorkdir: "/workspace",
@@ -244,12 +255,39 @@ describe("createReplyMediaPathNormalizer", () => {
       workspaceDir: "/tmp/agent-workspace",
     });
 
-    const result = await normalize({
-      mediaUrls: ["/Users/peter/Documents/report.pdf"],
+    await expect(
+      normalize({
+        mediaUrls: ["/Users/peter/Documents/report.pdf"],
+      }),
+    ).rejects.toMatchObject({
+      name: "ReplyMediaNormalizationError",
+      failedMedia: ["/Users/peter/Documents/report.pdf"],
+    } satisfies Partial<ReplyMediaNormalizationError>);
+    expect(resolveOutboundAttachmentFromUrl).not.toHaveBeenCalled();
+  });
+
+  it("maps absolute workspace media paths into the host sandbox workspace before staging", async () => {
+    ensureSandboxWorkspaceForSession.mockResolvedValue({
+      workspaceDir: "/tmp/sandboxes/session-1",
+      containerWorkdir: "/workspace",
+    });
+    const absolutePath = "/Users/peter/.openclaw/workspace/exports/images/chart.png";
+    const normalize = createReplyMediaPathNormalizer({
+      cfg: { agents: { defaults: { mediaMaxMb: 8 } } },
+      sessionKey: "session-key",
+      workspaceDir: "/Users/peter/.openclaw/workspace",
     });
 
-    expectNoMedia(result);
-    expect(resolveOutboundAttachmentFromUrl).not.toHaveBeenCalled();
+    const result = await normalize({
+      mediaUrls: [absolutePath],
+    });
+
+    expectMedia(result, "/tmp/outbound-media/chart.png", ["/tmp/outbound-media/chart.png"]);
+    expectOutboundAttachmentCall(
+      0,
+      "/tmp/sandboxes/session-1/exports/images/chart.png",
+      8 * 1024 * 1024,
+    );
   });
 
   it("stages absolute workspace media paths before sandbox mapping", async () => {
@@ -319,22 +357,25 @@ describe("createReplyMediaPathNormalizer", () => {
     expectOutboundAttachmentCall(0, absolutePath, 64 * 1024 * 1024);
   });
 
-  it("drops workspace-relative media paths that escape the agent workspace", async () => {
+  it("fails fast when workspace-relative media paths escape the agent workspace", async () => {
     const normalize = createReplyMediaPathNormalizer({
       cfg: {},
       sessionKey: "session-key",
       workspaceDir: "/tmp/agent-workspace",
     });
 
-    const result = await normalize({
-      mediaUrls: ["../../etc/passwd"],
-    });
-
-    expectNoMedia(result);
+    await expect(
+      normalize({
+        mediaUrls: ["../../etc/passwd"],
+      }),
+    ).rejects.toMatchObject({
+      name: "ReplyMediaNormalizationError",
+      failedMedia: ["../../etc/passwd"],
+    } satisfies Partial<ReplyMediaNormalizationError>);
     expect(resolveOutboundAttachmentFromUrl).not.toHaveBeenCalled();
   });
 
-  it("drops sandbox-relative media paths that escape both sandbox and workspace", async () => {
+  it("fails fast when sandbox-relative media paths escape both sandbox and workspace", async () => {
     ensureSandboxWorkspaceForSession.mockResolvedValue({
       workspaceDir: "/tmp/sandboxes/session-1",
       containerWorkdir: "/workspace",
@@ -345,11 +386,14 @@ describe("createReplyMediaPathNormalizer", () => {
       workspaceDir: "/tmp/agent-workspace",
     });
 
-    const result = await normalize({
-      mediaUrls: ["../../etc/passwd"],
-    });
-
-    expectNoMedia(result);
+    await expect(
+      normalize({
+        mediaUrls: ["../../etc/passwd"],
+      }),
+    ).rejects.toMatchObject({
+      name: "ReplyMediaNormalizationError",
+      failedMedia: ["../../etc/passwd"],
+    } satisfies Partial<ReplyMediaNormalizationError>);
     expect(resolveOutboundAttachmentFromUrl).not.toHaveBeenCalled();
   });
 
@@ -393,7 +437,7 @@ describe("createReplyMediaPathNormalizer", () => {
     expect(resolveOutboundAttachmentFromUrl).not.toHaveBeenCalled();
   });
 
-  it("drops managed outbound media symlinks escaping the shared media root without sandbox mapping", async () => {
+  it("fails fast when managed outbound media symlinks escape the shared media root", async () => {
     if (process.platform === "win32") {
       return;
     }
@@ -412,11 +456,14 @@ describe("createReplyMediaPathNormalizer", () => {
         workspaceDir: "/tmp/agent-workspace",
       });
 
-      const result = await normalize({
-        mediaUrls: [symlinkPath],
-      });
-
-      expectNoMedia(result);
+      await expect(
+        normalize({
+          mediaUrls: [symlinkPath],
+        }),
+      ).rejects.toMatchObject({
+        name: "ReplyMediaNormalizationError",
+        failedMedia: [symlinkPath],
+      } satisfies Partial<ReplyMediaNormalizationError>);
       expect(resolveOutboundAttachmentFromUrl).not.toHaveBeenCalled();
     } finally {
       await fs.rm(symlinkPath, { force: true });
@@ -425,7 +472,7 @@ describe("createReplyMediaPathNormalizer", () => {
     }
   });
 
-  it("drops host-local media when shared outbound attachment policy rejects it", async () => {
+  it("fails fast when shared outbound attachment policy rejects host-local media", async () => {
     resolveOutboundAttachmentFromUrl.mockRejectedValueOnce(
       new Error("Local media path is not under an allowed directory"),
     );
@@ -435,14 +482,17 @@ describe("createReplyMediaPathNormalizer", () => {
       workspaceDir: "/tmp/agent-workspace",
     });
 
-    const result = await normalize({
-      mediaUrls: ["/Users/peter/secrets/photo.png"],
-    });
-
-    expectNoMedia(result);
+    await expect(
+      normalize({
+        mediaUrls: ["/Users/peter/secrets/photo.png"],
+      }),
+    ).rejects.toMatchObject({
+      name: "ReplyMediaNormalizationError",
+      failedMedia: ["/Users/peter/secrets/photo.png"],
+    } satisfies Partial<ReplyMediaNormalizationError>);
   });
 
-  it("keeps reply text and appends a warning when all reply media is dropped", async () => {
+  it("fails fast when reply text includes media that cannot be staged", async () => {
     resolveOutboundAttachmentFromUrl.mockRejectedValueOnce(new Error("file not found"));
     const normalize = createReplyMediaPathNormalizer({
       cfg: {},
@@ -450,16 +500,18 @@ describe("createReplyMediaPathNormalizer", () => {
       workspaceDir: "/tmp/agent-workspace",
     });
 
-    const result = await normalize({
-      text: "WA_MEDIA_DM_07",
-      mediaUrls: ["./out/missing.png"],
-    });
-
-    expect(result.text).toBe("WA_MEDIA_DM_07\n⚠️ Media failed.");
-    expectNoMedia(result);
+    await expect(
+      normalize({
+        text: "WA_MEDIA_DM_07",
+        mediaUrls: ["./out/missing.png"],
+      }),
+    ).rejects.toMatchObject({
+      name: "ReplyMediaNormalizationError",
+      failedMedia: ["./out/missing.png"],
+    } satisfies Partial<ReplyMediaNormalizationError>);
   });
 
-  it("keeps surviving media and appends a warning when some reply media is dropped", async () => {
+  it("fails fast when media-only output cannot be staged", async () => {
     resolveOutboundAttachmentFromUrl.mockRejectedValueOnce(new Error("file not found"));
     const normalize = createReplyMediaPathNormalizer({
       cfg: {},
@@ -467,29 +519,14 @@ describe("createReplyMediaPathNormalizer", () => {
       workspaceDir: "/tmp/agent-workspace",
     });
 
-    const result = await normalize({
-      text: "Here is the surviving attachment",
-      mediaUrls: ["./out/missing.png", "https://example.com/ok.png"],
-    });
-
-    expect(result.text).toBe("Here is the surviving attachment\n⚠️ Media failed.");
-    expectMedia(result, "https://example.com/ok.png", ["https://example.com/ok.png"]);
-  });
-
-  it("returns a warning-only text reply when media-only output is dropped upstream", async () => {
-    resolveOutboundAttachmentFromUrl.mockRejectedValueOnce(new Error("file not found"));
-    const normalize = createReplyMediaPathNormalizer({
-      cfg: {},
-      sessionKey: "session-key",
-      workspaceDir: "/tmp/agent-workspace",
-    });
-
-    const result = await normalize({
-      mediaUrls: ["./out/missing.png"],
-    });
-
-    expect(result.text).toBe("⚠️ Media failed.");
-    expectNoMedia(result);
+    await expect(
+      normalize({
+        mediaUrls: ["./out/missing.png"],
+      }),
+    ).rejects.toMatchObject({
+      name: "ReplyMediaNormalizationError",
+      failedMedia: ["./out/missing.png"],
+    } satisfies Partial<ReplyMediaNormalizationError>);
   });
 
   it("threads requester context into shared outbound media access", async () => {

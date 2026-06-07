@@ -1,8 +1,16 @@
 import { resolveOutboundSendDep } from "openclaw/plugin-sdk/channel-outbound";
-import { resolveIMessageDuplicateSourceOwner, type ResolvedIMessageAccount } from "./accounts.js";
+import {
+  describeIMessageAccountSource,
+  isOpenBubblesIMessageAccount,
+  resolveIMessageDuplicateSourceOwner,
+  resolveIMessageOpenBubblesBridgePath,
+  resolveIMessageOpenBubblesStateDir,
+  type ResolvedIMessageAccount,
+} from "./accounts.js";
 import { PAIRING_APPROVED_MESSAGE, resolveChannelMediaMaxBytes } from "./channel-api.js";
 import type { ChannelPlugin } from "./channel-api.js";
 import { monitorIMessageProvider } from "./monitor.js";
+import { probeOpenBubblesIMessageAccount } from "./openbubbles-bridge.runtime.js";
 import { IMESSAGE_LEGACY_OUTBOUND_SEND_DEP_KEYS } from "./outbound-send-deps.js";
 import { probeIMessage } from "./probe.js";
 import { sendMessageIMessage } from "./send.js";
@@ -52,7 +60,14 @@ export async function probeIMessageAccount(params?: {
   timeoutMs?: number;
   cliPath?: string;
   dbPath?: string;
+  account?: ResolvedIMessageAccount;
 }) {
+  if (params?.account && isOpenBubblesIMessageAccount(params.account)) {
+    return await probeOpenBubblesIMessageAccount({
+      account: params.account,
+      timeoutMs: params.timeoutMs,
+    });
+  }
   return await probeIMessage(params?.timeoutMs, {
     cliPath: params?.cliPath,
     dbPath: params?.dbPath,
@@ -65,13 +80,29 @@ export async function startIMessageGatewayAccount(
   >[0],
 ) {
   const account = ctx.account;
-  const cliPath = account.config.cliPath?.trim() || "imsg";
-  const dbPath = account.config.dbPath?.trim();
+  const cliPath = isOpenBubblesIMessageAccount(account)
+    ? resolveIMessageOpenBubblesBridgePath(account)
+    : account.config.cliPath?.trim() || "imsg";
+  const dbPath = isOpenBubblesIMessageAccount(account)
+    ? resolveIMessageOpenBubblesStateDir(account)
+    : account.config.dbPath?.trim();
   ctx.setStatus({
     accountId: account.accountId,
     cliPath,
     dbPath: dbPath ?? null,
   });
+  if (isOpenBubblesIMessageAccount(account)) {
+    ctx.log?.info?.(
+      `[${account.accountId}] parking watcher: OpenBubbles backend currently supports outbound/actions only (${describeIMessageAccountSource(account)})`,
+    );
+    if (ctx.abortSignal.aborted) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      ctx.abortSignal.addEventListener("abort", () => resolve(), { once: true });
+    });
+    return;
+  }
   const ownerAccountId = resolveIMessageDuplicateSourceOwner({ cfg: ctx.cfg, account });
   if (ownerAccountId) {
     // openclaw/openclaw#65141: this account shares a local Messages source with
@@ -90,7 +121,7 @@ export async function startIMessageGatewayAccount(
     return;
   }
   ctx.log?.info?.(
-    `[${account.accountId}] starting provider (${cliPath}${dbPath ? ` db=${dbPath}` : ""})`,
+    `[${account.accountId}] starting provider (${describeIMessageAccountSource(account)})`,
   );
   return await monitorIMessageProvider({
     accountId: account.accountId,

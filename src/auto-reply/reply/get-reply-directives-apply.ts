@@ -54,6 +54,7 @@ function hasOnlyModelDirective(directives: InlineDirectives): boolean {
     directives.hasModelDirective &&
     !directives.hasThinkDirective &&
     !directives.hasFastDirective &&
+    !directives.hasProgressDirective &&
     !directives.hasVerboseDirective &&
     !directives.hasTraceDirective &&
     !directives.hasReasoningDirective &&
@@ -208,6 +209,7 @@ export async function applyInlineDirectiveOverrides(params: {
   const hasAnyDirective =
     directives.hasThinkDirective ||
     directives.hasFastDirective ||
+    directives.hasProgressDirective ||
     directives.hasVerboseDirective ||
     directives.hasTraceDirective ||
     directives.hasReasoningDirective ||

@@ -1,5 +1,5 @@
 ---
-summary: "Native iMessage support via imsg (JSON-RPC over stdio), with private API actions for replies, tapbacks, effects, attachments, and group management. Preferred for new OpenClaw iMessage setups when host requirements fit."
+summary: "Native iMessage support via imsg (JSON-RPC over stdio), with an optional OpenBubbles-backed outbound edit/unsend path for local restored accounts. imsg remains the full send/receive backend when host requirements fit."
 read_when:
   - Setting up iMessage support
   - Debugging iMessage send/receive
@@ -7,16 +7,18 @@ title: "iMessage"
 ---
 
 <Note>
-For OpenClaw iMessage deployments, use `imsg` on a signed-in macOS Messages host. If your Gateway runs on Linux or Windows, point `channels.imessage.cliPath` at an SSH wrapper that runs `imsg` on the Mac.
+For most OpenClaw iMessage deployments, use `imsg` on a signed-in macOS Messages host. If your Gateway runs on Linux or Windows, point `channels.imessage.cliPath` at an SSH wrapper that runs `imsg` on the Mac.
+
+`channels.imessage.backend: "openbubbles"` is also available for local deployments that already have a restored OpenBubbles account state and want the Rust send/edit/unsend path instead of `imsg`. That backend currently does **not** provide inbound watch.
 
 **Gateway-downtime catchup is opt-in.** When enabled (`channels.imessage.catchup.enabled: true`), the gateway replays inbound messages that landed in `chat.db` while it was offline (crash, restart, Mac sleep) on next startup. Disabled by default — see [Catching up after gateway downtime](#catching-up-after-gateway-downtime). Closes [openclaw#78649](https://github.com/openclaw/openclaw/issues/78649).
 </Note>
 
 <Warning>
-BlueBubbles support was removed. Migrate `channels.bluebubbles` configs to `channels.imessage`; OpenClaw supports iMessage through `imsg` only. Start with [BlueBubbles removal and the imsg iMessage path](/announcements/bluebubbles-imessage) for the short announcement, or [Coming from BlueBubbles](/channels/imessage-from-bluebubbles) for the full migration table.
+BlueBubbles support was removed. Migrate `channels.bluebubbles` configs to `channels.imessage`; the bundled iMessage plugin is the supported surface. `imsg` remains the full send/receive backend, while `backend=openbubbles` is a narrower local option for outbound send plus edit/unsend. Start with [BlueBubbles removal and the imsg iMessage path](/announcements/bluebubbles-imessage) for the short announcement, or [Coming from BlueBubbles](/channels/imessage-from-bluebubbles) for the full migration table.
 </Warning>
 
-Status: native external CLI integration. Gateway spawns `imsg rpc` and communicates over JSON-RPC on stdio (no separate daemon/port). Advanced actions require `imsg launch` and a successful private API probe.
+Status: native external CLI integration. By default the gateway spawns `imsg rpc` and communicates over JSON-RPC on stdio (no separate daemon/port). Advanced actions require `imsg launch` and a successful private API probe. When `backend=openbubbles`, outbound send plus `edit` / `unsend` route through a configured OpenBubbles bridge executable and restored state directory; inbound watch is currently parked for that backend.
 
 <CardGroup cols={3}>
   <Card title="Private API actions" icon="wand-sparkles" href="#private-api-actions">
@@ -132,6 +134,37 @@ A wrapper that buffers stdin until a large block fills will produce symptoms tha
 
   </Tab>
 </Tabs>
+
+## OpenBubbles backend (local restored state)
+
+Use this only when you already have a local OpenBubbles account state restored on the same Mac and specifically want the Rust path for outbound send plus `edit` / `unsend`.
+
+```json5
+{
+  channels: {
+    imessage: {
+      enabled: true,
+      backend: "openbubbles",
+      openbubbles: {
+        bridgePath: "/usr/local/bin/openbubbles-imessage-bridge",
+        stateDir: "/Users/user/Library/Application Support/app.bluebubbles.BlueBubbles",
+      },
+    },
+  },
+}
+```
+
+Current scope of `backend=openbubbles`:
+
+- outbound send
+- `edit`
+- `unsend`
+
+Current limitations:
+
+- no inbound watch
+- no tapbacks, effects, threaded reply, or group management through this backend
+- requires a separate bridge executable that understands OpenClaw's OpenBubbles stdin/stdout JSON contract
 
 ## Requirements and permissions (macOS)
 

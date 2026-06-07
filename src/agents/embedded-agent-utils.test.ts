@@ -5,6 +5,7 @@ import {
   extractAssistantThinking,
   extractAssistantVisibleText,
   formatReasoningMessage,
+  isUnphasedToolUsePreamble,
   promoteThinkingTagsToBlocks,
   stripDowngradedToolCallText,
 } from "./embedded-agent-utils.js";
@@ -812,6 +813,20 @@ describe("extractAssistantVisibleText", () => {
     });
 
     expect(extractAssistantVisibleText(msg)).toBe("Done.");
+  });
+
+  it("flags unphased tool-use preambles that accompany tool calls", () => {
+    const msg = makeAssistantMessage({
+      role: "assistant",
+      stopReason: "toolUse",
+      content: [
+        { type: "text", text: "Let me save the key and build the tool." },
+        { type: "toolCall", id: "call_1", name: "write", arguments: { path: "/tmp/tool.py" } },
+      ],
+      timestamp: Date.now(),
+    });
+
+    expect(isUnphasedToolUsePreamble(msg)).toBe(true);
   });
 });
 

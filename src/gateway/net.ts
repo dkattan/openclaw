@@ -255,7 +255,7 @@ export {
  * - lan: always 0.0.0.0 (no fallback)
  * - tailnet: Tailnet IPv4 if available, else loopback
  * - auto: 0.0.0.0 inside containers (Docker/Podman/K8s); loopback otherwise
- * - custom: User-specified IP, fallback to 0.0.0.0 if unavailable
+ * - custom: User-specified host/IP, fallback to 0.0.0.0 if unavailable
  *
  * @returns The bind address to use (never null)
  */
@@ -294,10 +294,10 @@ export async function resolveGatewayBindHost(
       return "0.0.0.0";
     } // invalid config → fall back to all
 
-    if (isValidIPv4(host) && (await canBindToHost(host))) {
+    if (isValidHostname(host) && (await canBindToHost(host))) {
       return host;
     }
-    // Custom IP failed → fall back to LAN
+    // Custom host failed → fall back to LAN/all interfaces.
     return "0.0.0.0";
   }
 
@@ -387,6 +387,20 @@ export async function resolveGatewayListenHosts(
  */
 export function isValidIPv4(host: string): boolean {
   return isCanonicalDottedDecimalIPv4(host);
+}
+
+export function isValidHostname(host: string): boolean {
+  const trimmed = host.trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (isValidIPv4(trimmed)) {
+    return true;
+  }
+  if (!/[A-Za-z-]/.test(trimmed)) {
+    return false;
+  }
+  return /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*$/.test(trimmed);
 }
 
 /**

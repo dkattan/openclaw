@@ -14,7 +14,13 @@ import {
   createComputedAccountStatusAdapter,
   createDefaultChannelRuntimeState,
 } from "openclaw/plugin-sdk/status-helpers";
-import { resolveIMessageAccount, type ResolvedIMessageAccount } from "./accounts.js";
+import {
+  isOpenBubblesIMessageAccount,
+  resolveIMessageAccount,
+  resolveIMessageOpenBubblesBridgePath,
+  resolveIMessageOpenBubblesStateDir,
+  type ResolvedIMessageAccount,
+} from "./accounts.js";
 import { imessageMessageActions } from "./actions.js";
 import {
   imessageApprovalCapability,
@@ -284,8 +290,19 @@ export const imessagePlugin: ChannelPlugin<ResolvedIMessageAccount, IMessageProb
           enabled: account.enabled,
           configured: account.configured,
           extra: {
-            cliPath: runtime?.cliPath ?? account.config.cliPath ?? null,
-            dbPath: runtime?.dbPath ?? account.config.dbPath ?? null,
+            backend: isOpenBubblesIMessageAccount(account) ? "openbubbles" : "imsg",
+            cliPath:
+              runtime?.cliPath ??
+              (isOpenBubblesIMessageAccount(account)
+                ? resolveIMessageOpenBubblesBridgePath(account)
+                : account.config.cliPath) ??
+              null,
+            dbPath:
+              runtime?.dbPath ??
+              (isOpenBubblesIMessageAccount(account)
+                ? resolveIMessageOpenBubblesStateDir(account)
+                : account.config.dbPath) ??
+              null,
           },
         }),
         resolveAccountState: ({ enabled }) => (enabled ? "enabled" : "disabled"),

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  BlueBubblesConfigSchema,
   DiscordConfigSchema,
   IMessageConfigSchema,
   IrcConfigSchema,
@@ -157,5 +158,51 @@ describe("Discord mentionAliases schema", () => {
       },
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("BlueBubbles threadReplies schema", () => {
+  it("accepts threadReplies at channel and account scope", () => {
+    const result = BlueBubblesConfigSchema.safeParse({
+      threadReplies: "inbound",
+      accounts: {
+        work: {
+          threadReplies: "always",
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+  });
+});
+
+describe("iMessage OpenBubbles backend schema", () => {
+  it("requires stateDir when backend=openbubbles", () => {
+    const result = IMessageConfigSchema.safeParse({
+      backend: "openbubbles",
+      openbubbles: {},
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.error.issues.some(
+          (issue) =>
+            issue.path.join(".") === "openbubbles.stateDir" &&
+            issue.message.includes('backend="openbubbles"'),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("accepts backend=openbubbles when stateDir is configured", () => {
+    expect(
+      IMessageConfigSchema.safeParse({
+        backend: "openbubbles",
+        openbubbles: {
+          stateDir: "~/Library/Application Support/app.bluebubbles.BlueBubbles",
+        },
+      }).success,
+    ).toBe(true);
   });
 });

@@ -28,6 +28,15 @@ export type IMessageActionConfig = {
 
 export type IMessageReactionNotificationMode = "off" | "own" | "all";
 
+export type IMessageBackend = "imsg" | "openbubbles";
+
+export type IMessageOpenBubblesConfig = {
+  /** Executable bridge used for OpenBubbles-backed iMessage actions/sends. */
+  bridgePath?: string;
+  /** Restored OpenBubbles state directory for the authenticated account. */
+  stateDir?: string;
+};
+
 export type IMessageAccountConfig = {
   /** Optional display name for this account (used in CLI/UI lists). */
   name?: string;
@@ -39,10 +48,14 @@ export type IMessageAccountConfig = {
   configWrites?: boolean;
   /** If false, do not start this iMessage account. Default: true. */
   enabled?: boolean;
+  /** Backend implementation for this account (default: imsg). */
+  backend?: IMessageBackend;
   /** imsg CLI binary path (default: imsg). */
   cliPath?: string;
   /** Optional Messages db path override. */
   dbPath?: string;
+  /** OpenBubbles bridge/state config used when backend="openbubbles". */
+  openbubbles?: IMessageOpenBubblesConfig;
   /** Remote SSH host token for SCP attachment fetches (`host` or `user@host`). */
   remoteHost?: string;
   /** Enable or disable private API message actions. */

@@ -50,6 +50,23 @@ describe("resolveIMessageAccount", () => {
     expect(resolved.config.dmPolicy).toBe("open");
     expect(resolved.configured).toBe(true);
   });
+
+  it("keeps an implicit default account for root-level OpenBubbles config", () => {
+    const cfg = {
+      channels: {
+        imessage: {
+          backend: "openbubbles",
+          openbubbles: {
+            stateDir: "~/Library/Application Support/app.bluebubbles.BlueBubbles",
+          },
+        },
+      },
+    } as never;
+
+    expect(listIMessageAccountIds(cfg)).toEqual(["default"]);
+    expect(resolveDefaultIMessageAccountId(cfg)).toBe("default");
+    expect(resolveIMessageAccount({ cfg }).configured).toBe(true);
+  });
 });
 
 describe("iMessage duplicate-source watcher ownership", () => {
@@ -107,6 +124,28 @@ describe("iMessage duplicate-source watcher ownership", () => {
     }
   });
 
+  it("deduplicates OpenBubbles-backed accounts by state directory", () => {
+    const cfg = {
+      channels: {
+        imessage: {
+          accounts: {
+            darren: {
+              backend: "openbubbles",
+              openbubbles: { stateDir: "/tmp/darren-state" },
+            },
+            default: {
+              backend: "openbubbles",
+              openbubbles: { stateDir: "/tmp/darren-state" },
+            },
+          },
+        },
+      },
+    } as never;
+
+    const dupAccount = resolveIMessageAccount({ cfg, accountId: "default" });
+    expect(resolveIMessageDuplicateSourceOwner({ cfg, account: dupAccount })).toBe("darren");
+  });
+
   it("ignores a disabled duplicate when computing ownership", () => {
     const cfg = {
       channels: {
@@ -144,6 +183,30 @@ describe("iMessage duplicate-source watcher ownership", () => {
     expect(warnings[0]).toMatch(/swang430-gmail-com/);
     expect(warnings[0]).toMatch(/"default"/);
     expect(warnings[0]).toMatch(/cliPath=imsg/);
+  });
+
+  it("includes OpenBubbles state info in duplicate warnings", () => {
+    const cfg = {
+      channels: {
+        imessage: {
+          accounts: {
+            darren: {
+              backend: "openbubbles",
+              openbubbles: { stateDir: "/tmp/darren-state" },
+            },
+            default: {
+              backend: "openbubbles",
+              openbubbles: { stateDir: "/tmp/darren-state" },
+            },
+          },
+        },
+      },
+    } as never;
+
+    const warnings = collectIMessageDuplicateAccountSourceWarnings({ cfg });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/backend=openbubbles/);
+    expect(warnings[0]).toMatch(/stateDir=\/tmp\/darren-state/);
   });
 
   it("emits no warning when only one account is enabled", () => {

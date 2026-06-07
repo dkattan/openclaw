@@ -7,11 +7,26 @@ import {
   resolveIMessageApprovalReactionTargetWithPersistence,
 } from "./approval-reactions.js";
 import type { IMessageRpcClient } from "./client.js";
+import { rememberIMessageReplyCache, resetIMessageShortIdState } from "./monitor-reply-cache.js";
 import { sendMessageIMessage } from "./send.js";
 
 const IMESSAGE_TEST_CFG = {
   channels: {
     imessage: {
+      accounts: {
+        default: {},
+      },
+    },
+  },
+};
+
+const OPENBUBBLES_TEST_CFG = {
+  channels: {
+    imessage: {
+      backend: "openbubbles",
+      openbubbles: {
+        stateDir: "/tmp/openbubbles-state",
+      },
       accounts: {
         default: {},
       },
@@ -47,6 +62,7 @@ function createApprovalText(id = "approval-123"): string {
 describe("sendMessageIMessage receipts", () => {
   afterEach(() => {
     clearIMessageApprovalReactionTargetsForTest();
+    resetIMessageShortIdState();
     vi.unstubAllEnvs();
     vi.useRealTimers();
   });
@@ -89,6 +105,79 @@ describe("sendMessageIMessage receipts", () => {
       },
     ]);
     expect(result.receipt.sentAt).toBeGreaterThan(0);
+  });
+
+  it("routes sends through the OpenBubbles bridge for backend=openbubbles", async () => {
+    const client = createClient({ guid: "rpc-should-not-run" });
+    const sendViaOpenBubblesBridgeImpl = vi.fn().mockResolvedValue({ guid: "p:0/openbubbles-guid" });
+
+    const result = await sendMessageIMessage("+15551234567", "hello", {
+      config: OPENBUBBLES_TEST_CFG as never,
+      client,
+      sendViaOpenBubblesBridgeImpl,
+    });
+
+    expect(sendViaOpenBubblesBridgeImpl).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account: expect.objectContaining({
+          accountId: "default",
+          config: expect.objectContaining({ backend: "openbubbles" }),
+        }),
+        rawTarget: "+15551234567",
+        text: "hello",
+        region: "US",
+        service: "auto",
+        timeoutMs: undefined,
+      }),
+    );
+    expect(client.request).not.toHaveBeenCalled();
+    expect(result.messageId).toBe("p:0/openbubbles-guid");
+    expect(result.guid).toBe("p:0/openbubbles-guid");
+    expect(result.receipt.primaryPlatformMessageId).toBe("p:0/openbubbles-guid");
+  });
+
+  it("surfaces OpenBubbles bridge errors instead of falling back to imsg rpc", async () => {
+    const client = createClient({ guid: "rpc-should-not-run" });
+    const sendViaOpenBubblesBridgeImpl = vi
+      .fn()
+      .mockResolvedValue({ ok: false, error: "openbubbles send failed" });
+
+    await expect(
+      sendMessageIMessage("+15551234567", "hello", {
+        config: OPENBUBBLES_TEST_CFG as never,
+        client,
+        sendViaOpenBubblesBridgeImpl,
+      }),
+    ).rejects.toThrow("openbubbles send failed");
+
+    expect(client.request).not.toHaveBeenCalled();
+  });
+
+  it("resolves cached short reply ids to GUIDs before invoking send", async () => {
+    const client = createClient({ guid: "p:0/imsg-1" });
+    const issued = rememberIMessageReplyCache({
+      accountId: "default",
+      messageId: "p:0/parent-guid",
+      chatGuid: "chat-1",
+      timestamp: Date.now(),
+      isFromMe: true,
+    });
+
+    await sendMessageIMessage("chat_guid:chat-1", "hello", {
+      config: IMESSAGE_TEST_CFG,
+      client,
+      replyToId: issued.shortId,
+    });
+
+    expect(client.request).toHaveBeenCalledWith(
+      "send",
+      expect.objectContaining({
+        chat_guid: "chat-1",
+        reply_to: "p:0/parent-guid",
+        text: "hello",
+      }),
+      expect.any(Object),
+    );
   });
 
   it("sends explicit chat media-only payloads through send-attachment auto transport", async () => {

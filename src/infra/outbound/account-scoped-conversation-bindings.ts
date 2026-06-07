@@ -1,10 +1,15 @@
+import path from "node:path";
 import { resolveThreadBindingConversationIdFromBindingId } from "../../channels/thread-binding-id.js";
 import {
   resolveThreadBindingIdleTimeoutMsForChannel,
   resolveThreadBindingMaxAgeMsForChannel,
 } from "../../channels/thread-bindings-policy.js";
+import { resolveStateDir } from "../../config/paths.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { saveJsonFile } from "../../plugin-sdk/json-store.js";
 import { normalizeAccountId, resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
+import { normalizeOptionalString } from "../../shared/string-coerce.js";
+import { loadJsonFile } from "../json-file.js";
 import {
   registerSessionBindingAdapter,
   unregisterSessionBindingAdapter,
@@ -16,6 +21,7 @@ import {
 export type AccountScopedConversationBindingRecord<TKind extends string = string> = {
   accountId: string;
   conversationId: string;
+  parentConversationId?: string;
   targetKind: TKind;
   targetSessionKey: string;
   agentId?: string;
@@ -30,9 +36,13 @@ export type AccountScopedConversationBindingManager<TKind extends string = strin
   getByConversationId: (
     conversationId: string,
   ) => AccountScopedConversationBindingRecord<TKind> | undefined;
+  resolveByParentConversationId: (
+    parentConversationId: string,
+  ) => AccountScopedConversationBindingRecord<TKind> | undefined;
   listBySessionKey: (targetSessionKey: string) => AccountScopedConversationBindingRecord<TKind>[];
   bindConversation: (params: {
     conversationId: string;
+    parentConversationId?: string;
     targetKind: BindingTargetKind;
     targetSessionKey: string;
     metadata?: Record<string, unknown>;
@@ -51,7 +61,15 @@ export type AccountScopedConversationBindingManager<TKind extends string = strin
 type AccountScopedConversationBindingsState<TKind extends string> = {
   managersByAccountId: Map<string, AccountScopedConversationBindingManager<TKind>>;
   bindingsByAccountConversation: Map<string, AccountScopedConversationBindingRecord<TKind>>;
+  loadedAccountIds: Set<string>;
 };
+
+type PersistedAccountScopedConversationBindingsFile<TKind extends string = string> = {
+  version: 1;
+  bindings: AccountScopedConversationBindingRecord<TKind>[];
+};
+
+const ACCOUNT_SCOPED_BINDINGS_FILE_VERSION = 1;
 
 function getState<TKind extends string>(
   stateKey: symbol,
@@ -66,6 +84,7 @@ function getState<TKind extends string>(
   const next: AccountScopedConversationBindingsState<TKind> = {
     managersByAccountId: new Map(),
     bindingsByAccountConversation: new Map(),
+    loadedAccountIds: new Set(),
   };
   globalStore[stateKey] = next;
   return next;
@@ -73,6 +92,134 @@ function getState<TKind extends string>(
 
 function resolveBindingKey(params: { accountId: string; conversationId: string }): string {
   return `${params.accountId}:${params.conversationId}`;
+}
+
+function resolveBindingsFilePath(params: {
+  channel: string;
+  accountId: string;
+  env?: NodeJS.ProcessEnv;
+}): string {
+  return path.join(
+    resolveStateDir(params.env),
+    "bindings",
+    "account-scoped",
+    params.channel,
+    `${encodeURIComponent(params.accountId)}.json`,
+  );
+}
+
+function isRecordExpired<TKind extends string>(
+  record: AccountScopedConversationBindingRecord<TKind>,
+  params: { idleTimeoutMs: number; maxAgeMs: number; now?: number },
+): boolean {
+  const now = params.now ?? Date.now();
+  const idleExpiresAt =
+    params.idleTimeoutMs > 0 ? record.lastActivityAt + params.idleTimeoutMs : undefined;
+  const maxAgeExpiresAt = params.maxAgeMs > 0 ? record.boundAt + params.maxAgeMs : undefined;
+  const expiresAt =
+    idleExpiresAt != null && maxAgeExpiresAt != null
+      ? Math.min(idleExpiresAt, maxAgeExpiresAt)
+      : (idleExpiresAt ?? maxAgeExpiresAt);
+  return expiresAt != null ? expiresAt <= now : false;
+}
+
+function listActiveBindingsForAccount<TKind extends string>(params: {
+  state: AccountScopedConversationBindingsState<TKind>;
+  accountId: string;
+  idleTimeoutMs: number;
+  maxAgeMs: number;
+}): AccountScopedConversationBindingRecord<TKind>[] {
+  const active: AccountScopedConversationBindingRecord<TKind>[] = [];
+  for (const record of params.state.bindingsByAccountConversation.values()) {
+    if (record.accountId !== params.accountId) {
+      continue;
+    }
+    if (isRecordExpired(record, params)) {
+      params.state.bindingsByAccountConversation.delete(
+        resolveBindingKey({
+          accountId: record.accountId,
+          conversationId: record.conversationId,
+        }),
+      );
+      continue;
+    }
+    active.push(record);
+  }
+  return active;
+}
+
+function persistBindingsForAccount<TKind extends string>(params: {
+  channel: string;
+  accountId: string;
+  state: AccountScopedConversationBindingsState<TKind>;
+  idleTimeoutMs: number;
+  maxAgeMs: number;
+}): void {
+  const bindings = listActiveBindingsForAccount(params).toSorted((a, b) => a.boundAt - b.boundAt);
+  saveJsonFile(resolveBindingsFilePath(params), {
+    version: ACCOUNT_SCOPED_BINDINGS_FILE_VERSION,
+    bindings,
+  } satisfies PersistedAccountScopedConversationBindingsFile<TKind>);
+}
+
+function loadBindingsForAccount<TKind extends string>(params: {
+  channel: string;
+  accountId: string;
+  state: AccountScopedConversationBindingsState<TKind>;
+  idleTimeoutMs: number;
+  maxAgeMs: number;
+}): void {
+  if (params.state.loadedAccountIds.has(params.accountId)) {
+    return;
+  }
+  params.state.loadedAccountIds.add(params.accountId);
+  const parsed = loadJsonFile(resolveBindingsFilePath(params)) as
+    | PersistedAccountScopedConversationBindingsFile<TKind>
+    | undefined;
+  if (parsed?.version !== ACCOUNT_SCOPED_BINDINGS_FILE_VERSION || !Array.isArray(parsed.bindings)) {
+    return;
+  }
+  for (const entry of parsed.bindings) {
+    const conversationId = normalizeOptionalString(entry?.conversationId);
+    const targetSessionKey = normalizeOptionalString(entry?.targetSessionKey) ?? "";
+    const targetKind =
+      typeof entry?.targetKind === "string" && entry.targetKind.trim()
+        ? entry.targetKind
+        : undefined;
+    if (!conversationId || !targetSessionKey || !targetKind) {
+      continue;
+    }
+    const boundAt =
+      typeof entry?.boundAt === "number" && Number.isFinite(entry.boundAt)
+        ? Math.floor(entry.boundAt)
+        : Date.now();
+    const lastActivityAt =
+      typeof entry?.lastActivityAt === "number" && Number.isFinite(entry.lastActivityAt)
+        ? Math.floor(entry.lastActivityAt)
+        : boundAt;
+    const parentConversationId = normalizeOptionalString(entry?.parentConversationId);
+    const record: AccountScopedConversationBindingRecord<TKind> = {
+      accountId: params.accountId,
+      conversationId,
+      ...(parentConversationId && parentConversationId !== conversationId
+        ? { parentConversationId }
+        : {}),
+      targetKind,
+      targetSessionKey,
+      agentId: normalizeOptionalString(entry?.agentId) || undefined,
+      label: normalizeOptionalString(entry?.label) || undefined,
+      boundBy: normalizeOptionalString(entry?.boundBy) || undefined,
+      boundAt,
+      lastActivityAt: Math.max(lastActivityAt, boundAt),
+    };
+    if (isRecordExpired(record, params)) {
+      continue;
+    }
+    params.state.bindingsByAccountConversation.set(
+      resolveBindingKey({ accountId: params.accountId, conversationId }),
+      record,
+    );
+  }
 }
 
 function toSessionBindingRecord<TKind extends string>(params: {
@@ -100,6 +247,9 @@ function toSessionBindingRecord<TKind extends string>(params: {
       channel: params.channel,
       accountId: params.record.accountId,
       conversationId: params.record.conversationId,
+      ...(params.record.parentConversationId
+        ? { parentConversationId: params.record.parentConversationId }
+        : {}),
     },
     status: "active",
     boundAt: params.record.boundAt,
@@ -140,19 +290,70 @@ export function createAccountScopedConversationBindingManager<TKind extends stri
     channel: params.channel,
     accountId,
   });
+  loadBindingsForAccount({
+    channel: params.channel,
+    accountId,
+    state,
+    idleTimeoutMs,
+    maxAgeMs,
+  });
 
   let sessionBindingAdapter: SessionBindingAdapter;
   const manager: AccountScopedConversationBindingManager<TKind> = {
     accountId,
-    getByConversationId: (conversationId) =>
-      getState<TKind>(params.stateKey).bindingsByAccountConversation.get(
-        resolveBindingKey({ accountId, conversationId }),
-      ),
+    getByConversationId: (conversationId) => {
+      const key = resolveBindingKey({ accountId, conversationId });
+      const record = getState<TKind>(params.stateKey).bindingsByAccountConversation.get(key);
+      if (!record) {
+        return undefined;
+      }
+      if (!isRecordExpired(record, { idleTimeoutMs, maxAgeMs })) {
+        return record;
+      }
+      getState<TKind>(params.stateKey).bindingsByAccountConversation.delete(key);
+      persistBindingsForAccount({
+        channel: params.channel,
+        accountId,
+        state: getState<TKind>(params.stateKey),
+        idleTimeoutMs,
+        maxAgeMs,
+      });
+      return undefined;
+    },
+    resolveByParentConversationId: (parentConversationId) => {
+      const normalizedParentConversationId = parentConversationId.trim();
+      if (!normalizedParentConversationId) {
+        return undefined;
+      }
+      const candidates = listActiveBindingsForAccount({
+        state: getState<TKind>(params.stateKey),
+        accountId,
+        idleTimeoutMs,
+        maxAgeMs,
+      }).filter(
+        (record) =>
+          record.parentConversationId === normalizedParentConversationId &&
+          record.conversationId !== normalizedParentConversationId,
+      );
+      if (candidates.length !== 1) {
+        return undefined;
+      }
+      return candidates[0];
+    },
     listBySessionKey: (targetSessionKey) =>
-      [...getState<TKind>(params.stateKey).bindingsByAccountConversation.values()].filter(
-        (record) => record.accountId === accountId && record.targetSessionKey === targetSessionKey,
-      ),
-    bindConversation: ({ conversationId, targetKind, targetSessionKey, metadata }) => {
+      listActiveBindingsForAccount({
+        state: getState<TKind>(params.stateKey),
+        accountId,
+        idleTimeoutMs,
+        maxAgeMs,
+      }).filter((record) => record.targetSessionKey === targetSessionKey),
+    bindConversation: ({
+      conversationId,
+      parentConversationId,
+      targetKind,
+      targetSessionKey,
+      metadata,
+    }) => {
       const normalizedConversationId = conversationId.trim();
       const normalizedTargetSessionKey = targetSessionKey.trim();
       if (!normalizedConversationId || !normalizedTargetSessionKey) {
@@ -165,6 +366,12 @@ export function createAccountScopedConversationBindingManager<TKind extends stri
       const record: AccountScopedConversationBindingRecord<TKind> = {
         accountId,
         conversationId: normalizedConversationId,
+        ...(normalizeOptionalString(parentConversationId) &&
+        normalizeOptionalString(parentConversationId) !== normalizedConversationId
+          ? { parentConversationId: normalizeOptionalString(parentConversationId) }
+          : existing?.parentConversationId
+            ? { parentConversationId: existing.parentConversationId }
+            : {}),
         targetKind: params.toStoredTargetKind(targetKind),
         targetSessionKey: normalizedTargetSessionKey,
         agentId:
@@ -186,6 +393,13 @@ export function createAccountScopedConversationBindingManager<TKind extends stri
         resolveBindingKey({ accountId, conversationId: normalizedConversationId }),
         record,
       );
+      persistBindingsForAccount({
+        channel: params.channel,
+        accountId,
+        state: getState<TKind>(params.stateKey),
+        idleTimeoutMs,
+        maxAgeMs,
+      });
       return record;
     },
     touchConversation: (conversationId, at = Date.now()) => {
@@ -198,6 +412,13 @@ export function createAccountScopedConversationBindingManager<TKind extends stri
       }
       const updated = { ...existingRecord, lastActivityAt: at };
       getState<TKind>(params.stateKey).bindingsByAccountConversation.set(key, updated);
+      persistBindingsForAccount({
+        channel: params.channel,
+        accountId,
+        state: getState<TKind>(params.stateKey),
+        idleTimeoutMs,
+        maxAgeMs,
+      });
       return updated;
     },
     unbindConversation: (conversationId) => {
@@ -209,6 +430,13 @@ export function createAccountScopedConversationBindingManager<TKind extends stri
         return null;
       }
       getState<TKind>(params.stateKey).bindingsByAccountConversation.delete(key);
+      persistBindingsForAccount({
+        channel: params.channel,
+        accountId,
+        state: getState<TKind>(params.stateKey),
+        idleTimeoutMs,
+        maxAgeMs,
+      });
       return existingRecord;
     },
     unbindBySessionKey: (targetSessionKey) => {
@@ -224,6 +452,15 @@ export function createAccountScopedConversationBindingManager<TKind extends stri
         );
         removed.push(record);
       }
+      if (removed.length > 0) {
+        persistBindingsForAccount({
+          channel: params.channel,
+          accountId,
+          state: getState<TKind>(params.stateKey),
+          idleTimeoutMs,
+          maxAgeMs,
+        });
+      }
       return removed;
     },
     stop: () => {
@@ -233,6 +470,7 @@ export function createAccountScopedConversationBindingManager<TKind extends stri
         }
       }
       getState<TKind>(params.stateKey).managersByAccountId.delete(accountId);
+      getState<TKind>(params.stateKey).loadedAccountIds.delete(accountId);
       unregisterSessionBindingAdapter({
         channel: params.channel,
         accountId,
@@ -253,6 +491,7 @@ export function createAccountScopedConversationBindingManager<TKind extends stri
       }
       const bound = manager.bindConversation({
         conversationId: input.conversation.conversationId,
+        parentConversationId: input.conversation.parentConversationId,
         targetKind: input.targetKind,
         targetSessionKey: input.targetSessionKey,
         metadata: input.metadata,
@@ -282,10 +521,22 @@ export function createAccountScopedConversationBindingManager<TKind extends stri
         return null;
       }
       const found = manager.getByConversationId(ref.conversationId);
-      return found
+      if (found) {
+        return toSessionBindingRecord({
+          channel: params.channel,
+          record: found,
+          idleTimeoutMs,
+          maxAgeMs,
+          toSessionBindingTargetKind: params.toSessionBindingTargetKind,
+        });
+      }
+      const recoveredFromParent = ref.parentConversationId
+        ? undefined
+        : manager.resolveByParentConversationId(ref.conversationId);
+      return recoveredFromParent
         ? toSessionBindingRecord({
             channel: params.channel,
-            record: found,
+            record: recoveredFromParent,
             idleTimeoutMs,
             maxAgeMs,
             toSessionBindingTargetKind: params.toSessionBindingTargetKind,
@@ -347,4 +598,5 @@ export function resetAccountScopedConversationBindingsForTests(params: { stateKe
   }
   state.managersByAccountId.clear();
   state.bindingsByAccountConversation.clear();
+  state.loadedAccountIds.clear();
 }

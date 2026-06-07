@@ -16,9 +16,11 @@ export type ResolvedIMessageAccount = {
   configured: boolean;
 };
 
+export const DEFAULT_OPENBUBBLES_IMESSAGE_BRIDGE_PATH = "openbubbles-imessage-bridge";
+
 const { listAccountIds, resolveDefaultAccountId } = createAccountListHelpers("imessage", {
   implicitDefaultAccount: {
-    channelKeys: ["cliPath", "dbPath"],
+    channelKeys: ["backend", "cliPath", "dbPath", "openbubbles"],
   },
 });
 export const listIMessageAccountIds = listAccountIds;
@@ -34,6 +36,33 @@ function mergeIMessageAccountConfig(cfg: OpenClawConfig, accountId: string): IMe
   });
 }
 
+function resolveIMessageBackendFromConfig(config: IMessageAccountConfig): "imsg" | "openbubbles" {
+  return config.backend === "openbubbles" ? "openbubbles" : "imsg";
+}
+
+export function resolveIMessageBackend(account: Pick<ResolvedIMessageAccount, "config">): "imsg" | "openbubbles" {
+  return resolveIMessageBackendFromConfig(account.config);
+}
+
+export function isOpenBubblesIMessageAccount(account: Pick<ResolvedIMessageAccount, "config">): boolean {
+  return resolveIMessageBackend(account) === "openbubbles";
+}
+
+export function resolveIMessageOpenBubblesStateDir(
+  account: Pick<ResolvedIMessageAccount, "config">,
+): string | undefined {
+  return normalizeOptionalString(account.config.openbubbles?.stateDir);
+}
+
+export function resolveIMessageOpenBubblesBridgePath(
+  account: Pick<ResolvedIMessageAccount, "config">,
+): string {
+  return (
+    normalizeOptionalString(account.config.openbubbles?.bridgePath) ??
+    DEFAULT_OPENBUBBLES_IMESSAGE_BRIDGE_PATH
+  );
+}
+
 export function resolveIMessageAccount(params: {
   cfg: OpenClawConfig;
   accountId?: string | null;
@@ -44,7 +73,11 @@ export function resolveIMessageAccount(params: {
   const baseEnabled = params.cfg.channels?.imessage?.enabled !== false;
   const merged = mergeIMessageAccountConfig(params.cfg, accountId);
   const accountEnabled = merged.enabled !== false;
+  const openbubblesStateDir = normalizeOptionalString(merged.openbubbles?.stateDir);
+  const openbubblesBridgePath = normalizeOptionalString(merged.openbubbles?.bridgePath);
   const configured = Boolean(
+    (resolveIMessageBackendFromConfig(merged) === "openbubbles" &&
+      (openbubblesStateDir || openbubblesBridgePath)) ||
     merged.cliPath?.trim() ||
     merged.dbPath?.trim() ||
     merged.service ||
@@ -77,11 +110,33 @@ function normalizeIMessageDbPath(value: string | undefined | null): string {
   return value?.trim() ?? "";
 }
 
+export function describeIMessageAccountSource(account: Pick<ResolvedIMessageAccount, "config">): string {
+  if (isOpenBubblesIMessageAccount(account)) {
+    const bridgePath = resolveIMessageOpenBubblesBridgePath(account);
+    const stateDir = resolveIMessageOpenBubblesStateDir(account);
+    return stateDir
+      ? `backend=openbubbles, stateDir=${stateDir}, bridgePath=${bridgePath}`
+      : `backend=openbubbles, bridgePath=${bridgePath}`;
+  }
+  const cliPath = normalizeIMessageCliPath(account.config.cliPath);
+  const dbPath = normalizeIMessageDbPath(account.config.dbPath);
+  return dbPath ? `backend=imsg, cliPath=${cliPath}, dbPath=${dbPath}` : `backend=imsg, cliPath=${cliPath}`;
+}
+
 // Stable signature for the local Messages backend an iMessage account targets.
 // Two enabled accounts that share a signature watch the same source, which
 // caused duplicate inbound handling in openclaw/openclaw#65141.
 export function resolveIMessageAccountSourceSignature(account: ResolvedIMessageAccount): string {
+  if (isOpenBubblesIMessageAccount(account)) {
+    const stateDir = resolveIMessageOpenBubblesStateDir(account);
+    return JSON.stringify([
+      "openbubbles",
+      stateDir || "",
+      stateDir ? "" : resolveIMessageOpenBubblesBridgePath(account),
+    ]);
+  }
   return JSON.stringify([
+    "imsg",
     normalizeIMessageCliPath(account.config.cliPath),
     normalizeIMessageDbPath(account.config.dbPath),
   ]);
@@ -171,11 +226,8 @@ export function collectIMessageDuplicateAccountSourceWarnings(params: {
     const owner = collisions.find((a) => a.accountId === ownerId) ?? collisions[0];
     const duplicates = collisions.filter((a) => a.accountId !== owner.accountId);
     const dupIds = duplicates.map((a) => `"${a.accountId}"`).join(", ");
-    const cliPath = normalizeIMessageCliPath(owner.config.cliPath);
-    const dbPath = normalizeIMessageDbPath(owner.config.dbPath);
-    const where = dbPath ? `cliPath=${cliPath}, dbPath=${dbPath}` : `cliPath=${cliPath}`;
     warnings.push(
-      `- channels.imessage: accounts "${owner.accountId}" and ${dupIds} watch the same local Messages source (${where}). OpenClaw runs one watcher (owner: "${owner.accountId}") and idles the duplicate; the other accounts stay enabled for outbound sends and status. Inbound messages arrive tagged with accountId="${owner.accountId}", so bindings pinned to ${dupIds} should be re-pointed at "${owner.accountId}" (or set "enabled": false on "${owner.accountId}" to flip ownership). Set "enabled": false on the unused duplicates to silence this warning.`,
+      `- channels.imessage: accounts "${owner.accountId}" and ${dupIds} watch the same local Messages source (${describeIMessageAccountSource(owner)}). OpenClaw runs one watcher (owner: "${owner.accountId}") and idles the duplicate; the other accounts stay enabled for outbound sends and status. Inbound messages arrive tagged with accountId="${owner.accountId}", so bindings pinned to ${dupIds} should be re-pointed at "${owner.accountId}" (or set "enabled": false on "${owner.accountId}" to flip ownership). Set "enabled": false on the unused duplicates to silence this warning.`,
     );
   }
   return warnings;

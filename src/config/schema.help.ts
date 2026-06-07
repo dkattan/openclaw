@@ -72,7 +72,7 @@ export const FIELD_HELP: Record<string, string> = {
   "gateway.bind":
     'Network bind profile: "auto", "lan", "loopback", "custom", or "tailnet" to control interface exposure. Keep "loopback" or "auto" for safest local operation unless external clients must connect.',
   "gateway.customBindHost":
-    "Explicit bind host/IP used when gateway.bind is set to custom for manual interface targeting. Use a precise address and avoid wildcard binds unless external exposure is required.",
+    "Explicit bind host/IP used when gateway.bind is set to custom for manual interface targeting. Use a precise address or hostname and avoid wildcard binds unless external exposure is required.",
   "gateway.controlUi":
     "Control UI hosting settings including enablement, pathing, and browser-origin/auth hardening behavior. Keep UI exposure minimal and pair with strong auth controls before internet-facing deployments.",
   "gateway.controlUi.enabled":

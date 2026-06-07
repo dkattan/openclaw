@@ -34,6 +34,20 @@ import type { ElevatedLevel, ReasoningLevel, ThinkLevel } from "./directives.js"
 import { refreshQueuedFollowupSession } from "./queue.js";
 import { resolveRuntimePolicySessionKey } from "./runtime-policy-session-key.js";
 
+function formatProgressUpdatesStatus(mode: "native" | "paced" | undefined): string {
+  return withOptions(`Progress updates are ${mode === "paced" ? "on" : "off"}.`, "on, off");
+}
+
+function formatInvalidProgressUpdatesSetting(rawLevel: string): string {
+  return `Unrecognized progress updates setting "${rawLevel}". Valid options: on, off.`;
+}
+
+function formatProgressUpdatesAck(mode: "native" | "paced"): string {
+  return formatDirectiveAck(
+    mode === "paced" ? "Progress updates enabled." : "Progress updates disabled.",
+  );
+}
+
 export async function handleDirectiveOnly(
   params: HandleDirectiveOnlyParams,
 ): Promise<ReplyPayload | undefined> {
@@ -218,6 +232,17 @@ export async function handleDirectiveOnly(
       text: `Unrecognized fast mode "${directives.rawFastMode}". Valid levels: status, on, off, default.`,
     };
   }
+  if (directives.hasProgressDirective && !directives.progressMode) {
+    if (!directives.rawProgressMode) {
+      const level = sessionEntry.progressMode ?? "native";
+      return {
+        text: formatProgressUpdatesStatus(level),
+      };
+    }
+    return {
+      text: formatInvalidProgressUpdatesSetting(directives.rawProgressMode),
+    };
+  }
   if (directives.hasReasoningDirective && !directives.reasoningLevel) {
     if (!directives.rawReasoningLevel) {
       const level = currentReasoningLevel ?? "off";
@@ -366,6 +391,7 @@ export async function handleDirectiveOnly(
       (Boolean(directives.thinkLevel) || directives.clearThinkLevel)) ||
     (directives.hasFastDirective &&
       (directives.fastMode !== undefined || directives.clearFastMode)) ||
+    (directives.hasProgressDirective && Boolean(directives.progressMode)) ||
     (directives.hasVerboseDirective &&
       Boolean(directives.verboseLevel) &&
       allowInternalVerbosePersistence) ||
@@ -397,6 +423,9 @@ export async function handleDirectiveOnly(
       delete sessionEntry.fastMode;
     } else if (directives.hasFastDirective && directives.fastMode !== undefined) {
       sessionEntry.fastMode = directives.fastMode;
+    }
+    if (directives.hasProgressDirective && directives.progressMode) {
+      sessionEntry.progressMode = directives.progressMode;
     }
     if (shouldRemapUnsupportedThinkLevel && remappedUnsupportedThinkLevel) {
       sessionEntry.thinkingLevel = remappedUnsupportedThinkLevel;
@@ -543,6 +572,9 @@ export async function handleDirectiveOnly(
         ? formatDirectiveAck("Fast mode enabled.")
         : formatDirectiveAck("Fast mode disabled."),
     );
+  }
+  if (directives.hasProgressDirective && directives.progressMode) {
+    parts.push(formatProgressUpdatesAck(directives.progressMode));
   }
   if (directives.hasVerboseDirective && directives.verboseLevel) {
     parts.push(

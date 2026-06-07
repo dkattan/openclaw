@@ -109,6 +109,14 @@ describe("mime detection", () => {
       }),
       expected: "text/javascript",
     },
+    {
+      name: "uses extension mapping for vCard files",
+      input: async () => ({
+        buffer: Buffer.from("BEGIN:VCARD\nVERSION:3.0\nFN:Jane Example\nEND:VCARD\n", "utf8"),
+        filePath: "/tmp/contact.vcf",
+      }),
+      expected: "text/vcard",
+    },
   ] as const)("$name", async ({ input, expected }) => {
     await expectDetectedMime({
       input: await input(),
@@ -182,6 +190,8 @@ describe("mimeTypeFromFilePath", () => {
     { filePath: "clip.flv", expected: "video/x-flv" },
     { filePath: "clip.wmv", expected: "video/x-ms-wmv" },
     { filePath: "debug.log", expected: "text/plain" },
+    { filePath: "contact.vcf", expected: "text/vcard" },
+    { filePath: "contact.vcard", expected: "text/vcard" },
     { filePath: "page.xml", expected: "text/xml" },
     { filePath: "unknown.bin", expected: undefined },
   ] as const)("maps $filePath", ({ filePath, expected }) => {
@@ -223,6 +233,8 @@ describe("extensionForMime", () => {
     { mime: "application/pdf", expected: ".pdf" },
     { mime: "text/plain", expected: ".txt" },
     { mime: "text/markdown", expected: ".md" },
+    { mime: "text/vcard", expected: ".vcf" },
+    { mime: "text/x-vcard", expected: ".vcf" },
     { mime: "text/html", expected: ".html" },
     { mime: "text/xml", expected: ".xml" },
     { mime: "text/css", expected: ".css" },
@@ -290,6 +302,7 @@ describe("mediaKindFromMime", () => {
   it.each([
     { mime: "text/plain", expected: "document" },
     { mime: "text/csv", expected: "document" },
+    { mime: "text/vcard", expected: "document" },
     { mime: "text/html; charset=utf-8", expected: "document" },
     { mime: "model/gltf+json", expected: undefined },
     { mime: null, expected: undefined },

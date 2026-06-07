@@ -873,7 +873,14 @@ describe("gatherDaemonStatus", () => {
       deep: false,
     });
 
-    expect((callArg(inspectGatewayRestart) as { port?: number }).port).toBe(19001);
+    expect(inspectGatewayRestart).toHaveBeenCalledWith(
+      expect.objectContaining({
+        port: 19001,
+        probeAuth: {
+          token: "daemon-token", // pragma: allowlist secret
+        },
+      }),
+    );
     expect(status.health).toEqual({
       healthy: false,
       staleGatewayPids: [9000],

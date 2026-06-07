@@ -318,6 +318,85 @@ describe("mixed inline directives", () => {
     expect(sessionEntry.execAsk).toBe("always");
     expect(sessionEntry.execNode).toBe("worker-1");
   });
+  it("emits directive ack while persisting inline progress updates in mixed messages", async () => {
+    const directives = parseInlineDirectives("please reply\nupdates on");
+    const cfg = createConfig();
+    const sessionEntry = createSessionEntry({ progressMode: "native" });
+    const sessionStore = { "agent:main:imessage:user": sessionEntry };
+
+    const fastLane = await applyInlineDirectivesFastLane({
+      directives,
+      commandAuthorized: true,
+      senderIsOwner: false,
+      ctx: { Surface: "bluebubbles" } as never,
+      cfg,
+      agentId: "main",
+      isGroup: false,
+      sessionEntry,
+      sessionStore,
+      sessionKey: "agent:main:imessage:user",
+      storePath: undefined,
+      elevatedEnabled: false,
+      elevatedAllowed: false,
+      elevatedFailures: [],
+      messageProviderKey: "bluebubbles",
+      defaultProvider: "openai-codex",
+      defaultModel: "gpt-5.5",
+      aliasIndex: { byAlias: new Map(), byKey: new Map() },
+      allowedModelKeys: new Set(),
+      allowedModelCatalog: [],
+      resetModelOverride: false,
+      provider: "openai-codex",
+      model: "gpt-5.5",
+      initialModelLabel: "openai-codex/gpt-5.5",
+      formatModelSwitchEvent: (label) => label,
+      agentCfg: cfg.agents?.defaults,
+      modelState: {
+        resolveDefaultThinkingLevel: async () => "off",
+        resolveThinkingCatalog: async () => [],
+        allowedModelKeys: new Set(),
+        allowedModelCatalog: [],
+        resetModelOverride: false,
+      },
+    });
+
+    expect(fastLane.directiveAck).toEqual({
+      text: "⚙️ Progress updates enabled.",
+    });
+
+    await persistInlineDirectives({
+      directives,
+      cfg,
+      sessionEntry,
+      sessionStore,
+      sessionKey: "agent:main:imessage:user",
+      storePath: undefined,
+      elevatedEnabled: false,
+      elevatedAllowed: false,
+      defaultProvider: "openai-codex",
+      defaultModel: "gpt-5.5",
+      aliasIndex: { byAlias: new Map(), byKey: new Map() },
+      allowedModelKeys: new Set(),
+      provider: "openai-codex",
+      model: "gpt-5.5",
+      initialModelLabel: "openai-codex/gpt-5.5",
+      formatModelSwitchEvent: (label) => label,
+      agentCfg: cfg.agents?.defaults,
+      messageProvider: "bluebubbles",
+      surface: "bluebubbles",
+      gatewayClientScopes: [],
+    });
+
+    expect(sessionEntry.progressMode).toBe("paced");
+  });
+
+  it("keeps slash progress directives compatible", () => {
+    const directives = parseInlineDirectives("please reply\n/progress paced");
+
+    expect(directives.cleaned).toBe("please reply");
+    expect(directives.hasProgressDirective).toBe(true);
+    expect(directives.progressMode).toBe("paced");
+  });
 
   it("does not persist trace directives for unauthorized mixed messages", async () => {
     const directives = parseInlineDirectives("please reply\n/trace raw");

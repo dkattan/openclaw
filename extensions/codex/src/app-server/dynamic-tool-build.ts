@@ -591,11 +591,8 @@ function addNodeShellDynamicToolsIfNeeded(
 ): OpenClawDynamicTool[] {
   if (
     isCodexMemoryFlushRun(input.params) ||
-    !isCodexNativeExecutionBlockedByNodeExecHost(input.params, {
-      agentId: input.sessionAgentId,
-      runtimeSessionKey: input.sandboxSessionKey,
-      sandbox: input.sandbox,
-    })
+    input.nativeToolSurfaceEnabled === true ||
+    shouldExposeSandboxExecDynamicTool(input)
   ) {
     return filteredTools;
   }

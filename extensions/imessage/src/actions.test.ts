@@ -14,6 +14,18 @@ const runtimeMock = vi.hoisted(() => ({
   sendAttachment: vi.fn(),
 }));
 
+const openBubblesBridgeMock = vi.hoisted(() => ({
+  runOpenBubblesBridgeCommand: vi.fn(),
+  isOpenBubblesBridgeSuccess: vi.fn(
+    (result: Record<string, unknown> | null | undefined) =>
+      !(result?.ok === false || result?.success === false || typeof result?.error === "string"),
+  ),
+  resolveOpenBubblesBridgeError: vi.fn(
+    (result: Record<string, unknown> | null | undefined, fallback: string) =>
+      typeof result?.error === "string" ? result.error : fallback,
+  ),
+}));
+
 const rememberIMessageReplyCacheMock = vi.hoisted(() => vi.fn());
 
 const loggerMock = vi.hoisted(() => ({
@@ -48,6 +60,8 @@ vi.mock("./actions.runtime.js", () => ({
   imessageActionsRuntime: runtimeMock,
 }));
 
+vi.mock("./openbubbles-bridge.runtime.js", () => openBubblesBridgeMock);
+
 vi.mock("./monitor-reply-cache.js", async () => {
   const actual = await vi.importActual<typeof import("./monitor-reply-cache.js")>(
     "./monitor-reply-cache.js",
@@ -66,6 +80,20 @@ function cfg(actions?: Record<string, boolean | undefined>): OpenClawConfig {
       imessage: {
         cliPath: "imsg",
         dbPath: "/tmp/messages.db",
+        actions,
+      },
+    },
+  } as OpenClawConfig;
+}
+
+function openbubblesCfg(actions?: Record<string, boolean | undefined>): OpenClawConfig {
+  return {
+    channels: {
+      imessage: {
+        backend: "openbubbles",
+        openbubbles: {
+          stateDir: "/tmp/openbubbles-state",
+        },
         actions,
       },
     },
@@ -92,6 +120,9 @@ describe("imessage message actions", () => {
     rememberIMessageReplyCacheMock.mockReset();
     probeMock.getCachedIMessagePrivateApiStatus.mockReset();
     probeMock.probeIMessagePrivateApi.mockReset();
+    openBubblesBridgeMock.runOpenBubblesBridgeCommand.mockReset();
+    openBubblesBridgeMock.isOpenBubblesBridgeSuccess.mockClear();
+    openBubblesBridgeMock.resolveOpenBubblesBridgeError.mockClear();
     loggerMock.warn.mockReset();
   });
 
@@ -676,6 +707,91 @@ describe("imessage message actions", () => {
         } as never),
       ).rejects.toThrow(/requires a known chat/i);
       expect(runtimeMock.sendReaction).not.toHaveBeenCalled();
+    });
+
+    it("routes edit through the OpenBubbles bridge without probing imsg private APIs", async () => {
+      runtimeMock.resolveIMessageMessageId.mockReturnValueOnce("full-guid");
+      openBubblesBridgeMock.runOpenBubblesBridgeCommand.mockResolvedValue({ ok: true });
+
+      await imessageMessageActions.handleAction?.({
+        action: "edit",
+        cfg: openbubblesCfg(),
+        params: {
+          target: "+12069106512",
+          messageId: "5",
+          text: "edited text",
+        },
+      } as never);
+
+      expect(runtimeMock.resolveIMessageMessageId).toHaveBeenCalledWith("5", {
+        requireKnownShortId: true,
+        chatContext: {
+          chatGuid: undefined,
+          chatIdentifier: "iMessage;-;+12069106512",
+          chatId: undefined,
+        },
+        requireFromMe: true,
+      });
+      expect(openBubblesBridgeMock.runOpenBubblesBridgeCommand).toHaveBeenCalledWith({
+        account: expect.objectContaining({
+          accountId: "default",
+          config: expect.objectContaining({ backend: "openbubbles" }),
+        }),
+        command: "edit",
+        payload: {
+          rawTarget: "+12069106512",
+          messageId: "full-guid",
+          text: "edited text",
+        },
+        timeoutMs: undefined,
+      });
+      expect(probeMock.probeIMessagePrivateApi).not.toHaveBeenCalled();
+      expect(runtimeMock.resolveChatGuidForTarget).not.toHaveBeenCalled();
+    });
+
+    it("routes unsend through the OpenBubbles bridge", async () => {
+      runtimeMock.resolveIMessageMessageId.mockReturnValueOnce("full-guid");
+      openBubblesBridgeMock.runOpenBubblesBridgeCommand.mockResolvedValue({ ok: true });
+
+      await imessageMessageActions.handleAction?.({
+        action: "unsend",
+        cfg: openbubblesCfg(),
+        params: {
+          target: "+12069106512",
+          messageId: "5",
+        },
+      } as never);
+
+      expect(openBubblesBridgeMock.runOpenBubblesBridgeCommand).toHaveBeenCalledWith({
+        account: expect.objectContaining({
+          accountId: "default",
+          config: expect.objectContaining({ backend: "openbubbles" }),
+        }),
+        command: "unsend",
+        payload: {
+          rawTarget: "+12069106512",
+          messageId: "full-guid",
+        },
+        timeoutMs: undefined,
+      });
+      expect(probeMock.probeIMessagePrivateApi).not.toHaveBeenCalled();
+    });
+
+    it("rejects unsupported OpenBubbles actions instead of falling back to imsg", async () => {
+      await expect(
+        imessageMessageActions.handleAction?.({
+          action: "react",
+          cfg: openbubblesCfg(),
+          params: {
+            target: "+12069106512",
+            messageId: "5",
+            emoji: "👍",
+          },
+        } as never),
+      ).rejects.toThrow(/not supported for backend=openbubbles/i);
+
+      expect(openBubblesBridgeMock.runOpenBubblesBridgeCommand).not.toHaveBeenCalled();
+      expect(probeMock.probeIMessagePrivateApi).not.toHaveBeenCalled();
     });
 
     it("falls back to the synthesized identifier for send/reply/sendWithEffect when the chat is not yet registered", async () => {

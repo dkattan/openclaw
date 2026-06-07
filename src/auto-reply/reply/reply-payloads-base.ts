@@ -79,6 +79,37 @@ export function applyReplyTagsToPayload(
   return resolveReplyThreadingForPayload({ payload, currentMessageId });
 }
 
+export function applyResolvedReplyTarget(params: {
+  payload: ReplyPayload;
+  rootMessageId?: string;
+  replyToId?: string;
+  replyToIdFull?: string;
+  messageId?: string;
+  messageIdFull?: string;
+  currentMessageId?: string;
+}): ReplyPayload {
+  const explicitReplyToId = normalizeOptionalString(params.payload.replyToId);
+  if (explicitReplyToId) {
+    if (params.payload.replyToCurrent !== true && explicitReplyToId === params.payload.replyToId) {
+      return params.payload;
+    }
+    const { replyToCurrent: _replyToCurrent, ...rest } = params.payload;
+    return copyReplyPayloadMetadata(params.payload, { ...rest, replyToId: explicitReplyToId });
+  }
+
+  const resolvedReplyToId =
+    normalizeOptionalString(params.rootMessageId) ??
+    normalizeOptionalString(params.replyToIdFull ?? params.replyToId) ??
+    normalizeOptionalString(params.messageIdFull ?? params.messageId) ??
+    normalizeOptionalString(params.currentMessageId);
+  if (!resolvedReplyToId) {
+    return params.payload;
+  }
+
+  const { replyToCurrent: _replyToCurrent, ...rest } = params.payload;
+  return copyReplyPayloadMetadata(params.payload, { ...rest, replyToId: resolvedReplyToId });
+}
+
 export function isRenderablePayload(payload: ReplyPayload): boolean {
   return hasReplyPayloadContent(payload, { extraContent: payload.audioAsVoice });
 }

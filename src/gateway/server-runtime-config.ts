@@ -19,7 +19,7 @@ import { resolveHooksConfig } from "./hooks.js";
 import {
   defaultGatewayBindMode,
   isLoopbackHost,
-  isValidIPv4,
+  isValidHostname,
   resolveGatewayBindHost,
 } from "./net.js";
 import { mergeGatewayTailscaleConfig } from "./startup-auth.js";
@@ -75,9 +75,9 @@ export async function resolveGatewayRuntimeConfig(params: {
     if (!configuredCustomBindHost) {
       throw new Error("gateway.bind=custom requires gateway.customBindHost");
     }
-    if (!isValidIPv4(configuredCustomBindHost)) {
+    if (!isValidHostname(configuredCustomBindHost)) {
       throw new Error(
-        `gateway.bind=custom requires a valid IPv4 customBindHost (got ${configuredCustomBindHost})`,
+        `gateway.bind=custom requires a valid hostname or IPv4 customBindHost (got ${configuredCustomBindHost})`,
       );
     }
     if (bindHost !== configuredCustomBindHost) {

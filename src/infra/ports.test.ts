@@ -526,4 +526,65 @@ describe("inspectPortUsage on Windows", () => {
     const commandNames = runCommandWithTimeoutMock.mock.calls.map(([argv]) => argv[0]);
     expect(commandNames).toContain("wmic");
   });
+
+  it("records ancestor pids for unix listeners", async () => {
+    const port = 18789;
+
+    runCommandWithTimeoutMock.mockImplementation(async (argv: string[]) => {
+      const command = argv[0];
+      if (typeof command !== "string") {
+        return { stdout: "", stderr: "", code: 1 };
+      }
+      if (command.includes("lsof")) {
+        throw Object.assign(new Error("spawn lsof ENOENT"), { code: "ENOENT" });
+      }
+      if (command === "ss") {
+        return {
+          stdout: `LISTEN 0 511 127.0.0.1:${port} 0.0.0.0:* users:(("node",pid=4242,fd=23))`,
+          stderr: "",
+          code: 0,
+        };
+      }
+      if (command === "ps") {
+        const pid = argv[2];
+        if (argv.includes("command=")) {
+          return {
+            stdout: "openclaw-gateway\n",
+            stderr: "",
+            code: 0,
+          };
+        }
+        if (argv.includes("user=")) {
+          return {
+            stdout: "theclaw\n",
+            stderr: "",
+            code: 0,
+          };
+        }
+        if (argv.includes("ppid=")) {
+          const parentPidByPid: Record<string, string> = {
+            "1": "0",
+            "3131": "2020",
+            "2020": "1",
+            "4242": "3131",
+          };
+          return {
+            stdout: `${parentPidByPid[pid ?? ""] ?? "0"}\n`,
+            stderr: "",
+            code: 0,
+          };
+        }
+      }
+      return { stdout: "", stderr: "", code: 1 };
+    });
+
+    const result = await inspectPortUsage(port);
+
+    expect(result.status).toBe("busy");
+    expect(result.listeners[0]).toMatchObject({
+      pid: 4242,
+      ppid: 3131,
+      ancestorPids: [3131, 2020, 1],
+    });
+  });
 });

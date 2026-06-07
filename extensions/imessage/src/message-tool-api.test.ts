@@ -70,4 +70,22 @@ describe("iMessage message-tool artifact", () => {
 
     expect(discovery?.actions).toStrictEqual([]);
   });
+
+  it("advertises only edit/unsend for OpenBubbles-backed accounts", () => {
+    const discovery = describeMessageTool({
+      cfg: {
+        channels: {
+          imessage: {
+            backend: "openbubbles",
+            openbubbles: {
+              stateDir: "/tmp/openbubbles-state",
+            },
+          },
+        },
+      } as never,
+      currentChannelId: "+15550001111",
+    });
+
+    expect(discovery?.actions).toStrictEqual(["edit", "unsend"]);
+  });
 });

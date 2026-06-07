@@ -413,6 +413,7 @@ describe("runReplyAgent media path normalization", () => {
       target: "embedded_run",
       gatewayHealth: "live",
     }));
+    const foregroundReplyHandoffRef = { value: false };
 
     await runReplyAgent(
       makeRunReplyAgentParams({
@@ -420,6 +421,7 @@ describe("runReplyAgent media path normalization", () => {
         shouldSteer: true,
         shouldFollowup: true,
         isStreaming: true,
+        opts: { foregroundReplyHandoffRef },
       }),
     );
 
@@ -431,9 +433,11 @@ describe("runReplyAgent media path normalization", () => {
       },
     );
     expect(enqueueFollowupRunMock).not.toHaveBeenCalled();
+    expect(foregroundReplyHandoffRef.value).toBe(true);
   });
 
   it("queues active prompts in followup mode without steering", async () => {
+    const foregroundReplyHandoffRef = { value: false };
     await runReplyAgent(
       makeRunReplyAgentParams({
         resolvedQueue: { mode: "followup" } as QueueSettings,
@@ -442,12 +446,14 @@ describe("runReplyAgent media path normalization", () => {
         isActive: true,
         isRunActive: () => true,
         isStreaming: true,
+        opts: { foregroundReplyHandoffRef },
       }),
     );
 
     expect(queueEmbeddedAgentMessageWithOutcomeAsyncMock).not.toHaveBeenCalled();
     expect(enqueueFollowupRunMock).toHaveBeenCalledOnce();
     expect(enqueueFollowupRunMock.mock.calls[0]?.[1].prompt).toBe("generate chart");
+    expect(foregroundReplyHandoffRef.value).toBe(true);
   });
 
   it("falls back to a queued followup when active steering is rejected", async () => {

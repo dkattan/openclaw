@@ -66,4 +66,39 @@ describe("subscribeEmbeddedAgentSession", () => {
     expect(onPartialReply).not.toHaveBeenCalled();
     expect(subscription.assistantTexts).toStrictEqual([]);
   });
+
+  it("suppresses unphased tool-use preambles when the assistant message also contains tool calls", () => {
+    const onBlockReply = vi.fn();
+    const onPartialReply = vi.fn();
+    const { emit, subscription } = createSubscribedSessionHarness({
+      runId: "run",
+      onBlockReply,
+      onPartialReply,
+      blockReplyBreak: "message_end",
+    });
+
+    const toolUsePreambleMessage = {
+      role: "assistant",
+      content: [
+        { type: "text", text: "Got it — let me save the key and build the tool." },
+        { type: "toolCall", id: "call_1", name: "write", arguments: { path: "/tmp/tool.py" } },
+      ],
+      stopReason: "toolUse",
+    } as AssistantMessage;
+
+    emit({ type: "message_start", message: toolUsePreambleMessage });
+    emit({
+      type: "message_update",
+      message: toolUsePreambleMessage,
+      assistantMessageEvent: {
+        type: "text_delta",
+        delta: "Got it — let me save the key and build the tool.",
+      },
+    });
+    emit({ type: "message_end", message: toolUsePreambleMessage });
+
+    expect(onBlockReply).not.toHaveBeenCalled();
+    expect(onPartialReply).not.toHaveBeenCalled();
+    expect(subscription.assistantTexts).toStrictEqual([]);
+  });
 });
