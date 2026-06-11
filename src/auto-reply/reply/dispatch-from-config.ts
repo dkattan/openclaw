@@ -134,11 +134,11 @@ import { trimFinalReplyAgainstProgress } from "./progress-summary-final.js";
 import { createProgressSummaryReporter } from "./progress-summary-reporter.js";
 import { waitForReplyDispatcherIdle } from "./reply-dispatcher.js";
 import type { ReplyDispatchKind, ReplyDispatcher } from "./reply-dispatcher.types.js";
+import { applyResolvedReplyTarget } from "./reply-payloads.js";
 import { replyRunRegistry, type ReplyOperation } from "./reply-run-registry.js";
 import { isReplyProfilerEnabled } from "./reply-timing-tracker.js";
 import { admitReplyTurn, resolveReplyTurnKind } from "./reply-turn-admission.js";
 import { resolveRoutedDeliveryThreadId } from "./routed-delivery-thread.js";
-import { applyResolvedReplyTarget } from "./reply-payloads.js";
 import { resolveReplyRoutingDecision } from "./routing-policy.js";
 import {
   isExplicitSourceReplyCommand,
@@ -2447,6 +2447,7 @@ export async function dispatchReplyFromConfig(
         suppressDelivery ||
         pacedProgressDisabledNoticeSent ||
         nativeVisibleProgressDelivered ||
+        finalReplyDeliveryStarted ||
         Date.now() - progressDispatchStartedAt < PACED_PROGRESS_DISABLED_NOTICE_DELAY_MS
       ) {
         return;
@@ -2493,11 +2494,14 @@ export async function dispatchReplyFromConfig(
       throwIfFinalDeliveryAborted();
       const sourceReplyTranscriptMirror =
         getReplyPayloadMetadata(payload)?.sourceReplyTranscriptMirror;
+      const hasSendableFinalContent = resolveSendableOutboundReplyParts(payload).hasContent;
       const hasVisibleFinalContent = hasOutboundReplyContent(payload, { trimText: true });
+      if (hasSendableFinalContent) {
+        finalReplyDeliveryStarted = true;
+        clearPacedProgressDisabledNoticeTimer();
+      }
       if (hasVisibleFinalContent) {
         markInboundDedupeReplayUnsafe();
-        finalReplyDeliveryStarted = true;
-        await maybeSendPacedProgressDisabledNotice("final");
       }
       const dedupedPayload =
         sentPacedProgressTexts.length > 0
@@ -3570,7 +3574,8 @@ export async function dispatchReplyFromConfig(
             const normalizedTtsOnlyPayload = await normalizeReplyMediaPayload(ttsOnlyPayload);
             const threadedPayload = applyDispatchReplyTarget(normalizedTtsOnlyPayload);
             throwIfDispatchOperationAborted();
-            await maybeSendPacedProgressDisabledNotice("tts_only_final");
+            finalReplyDeliveryStarted = true;
+            clearPacedProgressDisabledNoticeTimer();
             const result = await routeReplyToOriginating(threadedPayload, {
               abortSignal: getDispatchAbortSignal(),
               kind: "final",

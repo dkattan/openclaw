@@ -2628,6 +2628,54 @@ describe("dispatchReplyFromConfig", () => {
     }
   });
 
+  it("cancels the paced troubleshooting notice when final delivery starts before the timer callback runs", async () => {
+    vi.useFakeTimers();
+    const originalSetTimeout = globalThis.setTimeout.bind(globalThis);
+    let delayedNoticeCallback: (() => void) | undefined;
+    const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    setTimeoutSpy.mockImplementation(((callback, delay, ...args) => {
+      if (delay === 7_000 && typeof callback === "function" && !delayedNoticeCallback) {
+        delayedNoticeCallback = () => {
+          callback(...args);
+        };
+        return originalSetTimeout(() => {}, 60_000);
+      }
+      return originalSetTimeout(callback, delay, ...args);
+    }) as typeof setTimeout);
+    try {
+      setNoAbort();
+      sessionStoreMocks.currentEntry = {
+        progressMode: "native",
+      };
+      const cfg = emptyConfig;
+      const dispatcher = createDispatcher();
+      const ctx = buildTestCtx({
+        Provider: "telegram",
+        ChatType: "direct",
+        SessionKey: "agent:main:main",
+      });
+
+      const replyResolver = () =>
+        new Promise<ReplyPayload>((resolve) => {
+          setTimeout(() => resolve({ text: "done" } satisfies ReplyPayload), 7_001);
+        });
+
+      const dispatchPromise = dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
+      await vi.advanceTimersByTimeAsync(7_001);
+      await dispatchPromise;
+
+      expect(dispatcher.sendToolResult).not.toHaveBeenCalled();
+      expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({ text: "done" });
+
+      delayedNoticeCallback?.();
+
+      expect(dispatcher.sendToolResult).not.toHaveBeenCalled();
+    } finally {
+      setTimeoutSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   it("sends the paced troubleshooting notice before long native tool results", async () => {
     vi.useFakeTimers();
     try {
