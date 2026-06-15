@@ -985,6 +985,8 @@ export async function buildIMessageInboundContext(params: {
     },
     reply: {
       to: imessageTo,
+      replyToId: messageSid,
+      replyToIdFull: messageGuid,
     },
     message: {
       body: combinedBody,
