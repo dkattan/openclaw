@@ -1,21 +1,37 @@
-#!/usr/bin/env bash
+#!/bin/sh
+# GITBUTLER_MANAGED_HOOK_V1
+# This hook is managed by GitButler to prevent accidental commits on the workspace branch.
+# Your original pre-commit hook has been preserved as 'pre-commit-user'.
 
-set -euo pipefail
+HOOKS_DIR=$(dirname "$0")
 
-ROOT_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-RUN_NODE_TOOL="$ROOT_DIR/scripts/pre-commit/run-node-tool.sh"
-FILTER_FILES="$ROOT_DIR/scripts/pre-commit/filter-staged-files.mjs"
-
-if [[ ! -x "$RUN_NODE_TOOL" ]]; then
-  echo "Missing helper: $RUN_NODE_TOOL" >&2
-  exit 1
+# Run user's hook first if it exists - if it fails, stop here
+if [ -x "$HOOKS_DIR/pre-commit-user" ]; then
+    "$HOOKS_DIR/pre-commit-user" "$@" || exit $?
 fi
 
-if [[ ! -f "$FILTER_FILES" ]]; then
-  echo "Missing helper: $FILTER_FILES" >&2
-  exit 1
+# Get the current branch name
+BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null)
+
+if [ "$BRANCH" = "gitbutler/workspace" ]; then
+    echo ""
+    echo "GITBUTLER_ERROR: Cannot commit directly to gitbutler/workspace branch."
+    echo ""
+    echo "GitButler manages commits on this branch. Please use GitButler to commit your changes:"
+    echo "  - Use the GitButler app to create commits"
+    echo "  - Or run 'but commit' from the command line"
+    echo ""
+    echo "If you want to exit GitButler mode and use normal git:"
+    echo "  - Run 'but teardown' to switch to a regular branch"
+    echo "  - Or directly checkout another branch: git checkout <branch>"
+    echo ""
+    echo "If you no longer have the GitButler CLI installed, you can simply remove this hook and checkout another branch:"
+    printf '  rm "%s/pre-commit"\n' "$HOOKS_DIR"
+    echo ""
+    exit 1
 fi
 
+<<<<<<< New base: fix(imessage): thread replies via send-rich when replyToId is set
 GIT_DIR="$(git rev-parse --git-dir 2>/dev/null || true)"
 if [[ -n "$GIT_DIR" ]] && \
   { [[ -f "$GIT_DIR/MERGE_HEAD" ]] || \
@@ -38,24 +54,26 @@ done < <(git diff --cached --name-only --diff-filter=ACMR -z)
 
 if [ "${#files[@]}" -eq 0 ]; then
   exit 0
-fi
-
-restage_files=()
-for file in "${files[@]}"; do
-  if ! git check-ignore --no-index -q -- "$file"; then
-    restage_files+=("$file")
-  fi
-done
-
-format_files=()
+||||||| Common ancestor
+# Security: avoid option-injection from malicious file names (e.g. "--all", "--force").
+# Robustness: NUL-delimited file list handles spaces/newlines safely.
+# Compatibility: use read loops instead of `mapfile` so this runs on macOS Bash 3.x.
+files=()
 while IFS= read -r -d '' file; do
-  format_files+=("$file")
-done < <(node "$FILTER_FILES" format -- "${restage_files[@]}")
+  files+=("$file")
+done < <(git diff --cached --name-only --diff-filter=ACMR -z)
 
-if [ "${#format_files[@]}" -gt 0 ]; then
-  "$RUN_NODE_TOOL" oxfmt --write --no-error-on-unmatched-pattern "${format_files[@]}"
+if [ "${#files[@]}" -eq 0 ]; then
+  exit 0
+=======
+# Not on workspace branch - run user's original hook if it exists
+if [ -x "$HOOKS_DIR/pre-commit-user" ]; then
+    echo ""
+    echo "WARNING: GitButler's pre-commit hook is still installed but you're not on gitbutler/workspace."
+    echo "If you're no longer using GitButler, you can restore your original hook:"
+    printf '  mv "%s/pre-commit-user" "%s/pre-commit"\n' "$HOOKS_DIR" "$HOOKS_DIR"
+    echo ""
+>>>>>>> Current commit: fix(imessage): thread replies via send-rich when replyToId is set
 fi
 
-if [ "${#restage_files[@]}" -gt 0 ]; then
-  git add -- "${restage_files[@]}"
-fi
+exit 0

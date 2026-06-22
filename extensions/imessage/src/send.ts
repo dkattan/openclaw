@@ -717,7 +717,7 @@ function isAttachmentCommandFallbackError(error: unknown): boolean {
   );
 }
 
-async function resolveAttachmentChatTarget(params: {
+async function resolveChatTargetForRichSend(params: {
   target: ReturnType<typeof parseIMessageTarget>;
   service?: IMessageService;
   runCliJson: (args: readonly string[]) => Promise<Record<string, unknown>>;
@@ -742,11 +742,52 @@ async function resolveAttachmentChatTarget(params: {
     }
     return `any;-;${normalizedHandle}`;
   }
+  if (params.target.kind === "chat_identifier") {
+    return params.target.chatIdentifier;
+  }
   if (params.target.kind !== "chat_id") {
     return null;
   }
   const result = await params.runCliJson(["group", "--chat-id", String(params.target.chatId)]);
   return stringValue(result.guid) ?? stringValue(result.chat_guid) ?? null;
+}
+
+async function trySendRichReply(params: {
+  text: string;
+  replyToId: string;
+  target: ReturnType<typeof parseIMessageTarget>;
+  service?: IMessageService;
+  runCliJson: (args: readonly string[]) => Promise<Record<string, unknown>>;
+}): Promise<Record<string, unknown> | null> {
+  let chatTarget: string | null;
+  try {
+    chatTarget = await resolveChatTargetForRichSend({
+      target: params.target,
+      service: params.service,
+      runCliJson: params.runCliJson,
+    });
+  } catch {
+    return null;
+  }
+  if (!chatTarget) {
+    return null;
+  }
+  try {
+    return await params.runCliJson([
+      "send-rich",
+      "--chat",
+      chatTarget,
+      "--text",
+      params.text,
+      "--reply-to",
+      params.replyToId,
+    ]);
+  } catch (error) {
+    if (isAttachmentCommandFallbackError(error)) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 async function trySendAttachmentForTarget(params: {
@@ -764,7 +805,7 @@ async function trySendAttachmentForTarget(params: {
 }): Promise<IMessageSendResult | null> {
   let attachmentChatTarget: string | null;
   try {
-    attachmentChatTarget = await resolveAttachmentChatTarget({
+    attachmentChatTarget = await resolveChatTargetForRichSend({
       target: params.target,
       service: params.service,
       runCliJson: params.runCliJson,
@@ -1000,6 +1041,65 @@ export async function sendMessageIMessage(
       };
     }
   }
+
+  const echoScope = resolveOutboundEchoScope({ accountId: account.accountId, target });
+
+  // When a replyToId is set and this is a text-only send (no file), use
+  // `imsg send-rich --reply-to` via the CLI instead of the RPC `send`
+  // method, because the RPC `send` method does not thread replies in
+  // chat.db. The `send-rich` command uses the IMCore bridge which sets
+  // thread_originator_guid and reply_to_guid correctly.
+  if (resolvedReplyToId && !filePath && message.trim()) {
+    const richResult = await trySendRichReply({
+      text: message,
+      replyToId: resolvedReplyToId,
+      target,
+      service,
+      runCliJson,
+    });
+    if (richResult) {
+      const richGuid = stringValue(richResult.messageGuid) ?? stringValue(richResult.guid);
+      const richMessageId = richGuid ?? "ok";
+      if (echoScope) {
+        rememberPersistedIMessageEcho({
+          scope: echoScope,
+          text: echoText,
+          messageId: richGuid,
+        });
+      }
+      if (richGuid) {
+        rememberIMessageReplyCache({
+          accountId: account.accountId,
+          messageId: richGuid,
+          chatGuid: target.kind === "chat_guid" ? target.chatGuid : undefined,
+          chatIdentifier:
+            target.kind === "chat_identifier"
+              ? target.chatIdentifier
+              : target.kind === "handle"
+                ? `${target.service === "sms" ? "SMS" : "iMessage"};-;${target.to}`
+                : undefined,
+          chatId: target.kind === "chat_id" ? target.chatId : undefined,
+          timestamp: Date.now(),
+          isFromMe: true,
+        });
+      }
+      return {
+        messageId: richMessageId,
+        ...(richGuid ? { guid: richGuid } : {}),
+        sentText: message,
+        ...(echoText ? { echoText } : {}),
+        receipt: createIMessageSendReceipt({
+          messageId: richMessageId,
+          target,
+          kind: "text",
+          replyToId: resolvedReplyToId,
+        }),
+      };
+    }
+    // send-rich unavailable (e.g. SIP enabled, bridge not running);
+    // fall through to RPC send without reply threading.
+  }
+
   const params: Record<string, unknown> = {
     text: message,
     service: service || "auto",
@@ -1025,8 +1125,6 @@ export async function sendMessageIMessage(
   } else {
     params.to = target.to;
   }
-
-  const echoScope = resolveOutboundEchoScope({ accountId: account.accountId, target });
 
   const client =
     opts.client ??
