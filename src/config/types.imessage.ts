@@ -9,6 +9,7 @@ import type {
   DmPolicy,
   GroupPolicy,
   MarkdownConfig,
+  ReplyToMode,
 } from "./types.base.js";
 import type {
   ChannelHealthMonitorConfig,
@@ -105,6 +106,8 @@ export type IMessageAccountConfig = {
   blockStreaming?: boolean;
   /** Merge streamed block replies before sending. */
   blockStreamingCoalesce?: BlockStreamingCoalesceConfig;
+  /** Controls whether outbound replies thread to the inbound message (default: "first"). */
+  replyToMode?: ReplyToMode;
   /** When private API is available, mark inbound chats read before dispatch (default: true). */
   sendReadReceipts?: boolean;
   /**

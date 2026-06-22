@@ -1466,6 +1466,7 @@ export const IMessageAccountSchemaBase = z
     streaming: ChannelDeliveryStreamingConfigSchema.optional(),
     blockStreaming: z.boolean().optional(),
     blockStreamingCoalesce: BlockStreamingCoalesceSchema.optional(),
+    replyToMode: ReplyToModeSchema.optional(),
     sendReadReceipts: z.boolean().optional(),
     reactionNotifications: z.enum(["off", "own", "all"]).optional(),
     coalesceSameSenderDms: z.boolean().optional(),

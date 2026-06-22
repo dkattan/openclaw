@@ -8,6 +8,7 @@ import {
   type MessageReceiptPartKind,
 } from "openclaw/plugin-sdk/channel-outbound";
 import { sanitizeForPlainText } from "openclaw/plugin-sdk/channel-outbound";
+import { createScopedAccountReplyToModeResolver } from "openclaw/plugin-sdk/conversation-runtime";
 import { buildPassiveProbedChannelStatusSummary } from "openclaw/plugin-sdk/extension-shared";
 import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 import { buildOutboundBaseSessionKey, type RoutePeer } from "openclaw/plugin-sdk/routing";
@@ -385,6 +386,13 @@ export const imessagePlugin: ChannelPlugin<ResolvedIMessageAccount, IMessageProb
             deps,
             replyToId: replyToId ?? undefined,
           }),
+      },
+    },
+    threading: {
+      scopedAccountReplyToMode: {
+        resolveAccount: (cfg, accountId) => resolveIMessageAccount({ cfg, accountId }),
+        resolveReplyToMode: (account) => account.config.replyToMode,
+        fallback: "first",
       },
     },
   });
