@@ -484,9 +484,11 @@ export function shouldEnableCodexAppServerNativeToolSurface(
   }
   // Codex native code mode exposes its shell/file surface as one app-server
   // capability, so narrow OpenClaw allowlists must fail closed rather than
-  // widening `message` or `web_search` into shell access.
+  // widening `message` or `web_search` into shell access. However, when the
+  // allowlist explicitly includes `exec` or `process`, the user has granted
+  // shell access and the native surface should be enabled.
   return (
-    hasWildcardCodexToolsAllow(toolsAllow) &&
+    (hasWildcardCodexToolsAllow(toolsAllow) || hasShellExecToolsAllow(toolsAllow)) &&
     canCodexAppServerNativeToolSurfaceHonorSandbox(sandbox, options)
   );
 }
@@ -940,6 +942,19 @@ export function filterCodexDynamicToolsForAllowlist<T extends { name: string }>(
 /** Detects the wildcard allowlist marker after Codex tool-name normalization. */
 export function hasWildcardCodexToolsAllow(toolsAllow: string[]): boolean {
   return toolsAllow.some((name) => normalizeCodexDynamicToolName(name) === "*");
+}
+
+/**
+ * Detects whether the allowlist grants shell/exec access via explicit tool names
+ * (exec, process) rather than a wildcard. The Codex native tool surface exposes
+ * shell/file capabilities, so a narrow allowlist that includes exec or process
+ * should still enable the native surface — not only wildcard allowlists.
+ */
+export function hasShellExecToolsAllow(toolsAllow: string[]): boolean {
+  const allowSet = new Set(
+    toolsAllow.map((name) => normalizeCodexDynamicToolName(name)).filter(Boolean),
+  );
+  return allowSet.has("exec") || allowSet.has("process");
 }
 
 /** Forces message delivery through the message tool when the source channel requires it. */
