@@ -128,6 +128,7 @@ export async function handleAssistantFailover(params: {
   failoverReason: FailoverReason | null;
   timedOut: boolean;
   idleTimedOut: boolean;
+  idleTimeoutMs?: number;
   timedOutDuringCompaction: boolean;
   timedOutDuringToolExecution: boolean;
   allowSameModelIdleTimeoutRetry: boolean;
@@ -387,6 +388,7 @@ function resolveAssistantFailoverErrorMessage(params: {
   activeErrorContext: { provider: string; model: string };
   timedOut: boolean;
   idleTimedOut: boolean;
+  idleTimeoutMs?: number;
   rateLimitFailure: boolean;
   billingFailure: boolean;
   authFailure: boolean;
@@ -394,6 +396,9 @@ function resolveAssistantFailoverErrorMessage(params: {
   authMode?: string;
 }): string {
   const timeoutFailure = params.timedOut || params.idleTimedOut;
+  const idleTimeoutSeconds = params.idleTimeoutMs
+    ? Math.floor(params.idleTimeoutMs / 1000)
+    : undefined;
   return (
     (params.lastAssistant
       ? formatAssistantErrorText(params.lastAssistant, {
@@ -406,7 +411,9 @@ function resolveAssistantFailoverErrorMessage(params: {
       : undefined) ||
     params.lastAssistant?.errorMessage?.trim() ||
     (timeoutFailure
-      ? "LLM request timed out."
+      ? params.idleTimedOut
+        ? `LLM request timed out${idleTimeoutSeconds ? ` (idle ${idleTimeoutSeconds}s)` : ""}. Provider: ${params.activeErrorContext.provider}/${params.activeErrorContext.model}.`
+        : `LLM request timed out. Provider: ${params.activeErrorContext.provider}/${params.activeErrorContext.model}.`
       : params.rateLimitFailure
         ? "LLM request rate limited."
         : params.billingFailure

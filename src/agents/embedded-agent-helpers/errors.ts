@@ -1552,7 +1552,10 @@ export function formatAssistantErrorText(
   }
 
   if (isTimeoutErrorMessage(raw)) {
-    return "LLM request timed out.";
+    const ctx = opts?.provider
+      ? ` Provider: ${opts.provider}${opts?.model ? `/${opts.model}` : ""}.`
+      : "";
+    return `LLM request timed out.${ctx}`;
   }
 
   if (isBillingErrorMessage(raw)) {

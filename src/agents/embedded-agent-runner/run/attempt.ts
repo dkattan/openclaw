@@ -5735,6 +5735,7 @@ export async function runEmbeddedAttempt(
         externalAbort,
         timedOut,
         idleTimedOut,
+        idleTimeoutMs,
         timedOutDuringCompaction,
         timedOutDuringToolExecution,
         promptError,

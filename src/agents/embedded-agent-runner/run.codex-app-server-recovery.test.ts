@@ -211,7 +211,7 @@ describe("runEmbeddedAgent Codex app-server recovery", () => {
 
     expect(result.payloads?.[0]).toMatchObject({
       isError: true,
-      text: "Request timed out before a response was generated. Please try again, or increase `agents.defaults.timeoutSeconds` in your config.",
+      text: "Request timed out before a response was generated. Provider: codex/gpt-5.5. Please try again, or increase `agents.defaults.timeoutSeconds` in your config.",
     });
     expect(mockedRunEmbeddedAttempt).toHaveBeenCalledTimes(1);
     expect(mockedMarkAuthProfileFailure).not.toHaveBeenCalled();

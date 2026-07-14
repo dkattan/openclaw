@@ -1296,13 +1296,24 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
           runtime.error?.(danger("imessage: missing delivery target"));
           return;
         }
+        // Ensure every reply has a replyToId for threading. The delivery
+        // pipeline should set this from currentMessageId, but if it's missing
+        // (e.g. context not fully populated), fall back to the inbound
+        // message GUID from the context payload.
+        let replyPayload = payload;
+        if (!replyPayload.replyToId) {
+          const inboundGuid = ctxPayload.MessageSidFull ?? ctxPayload.MessageSid;
+          if (inboundGuid) {
+            replyPayload = { ...replyPayload, replyToId: inboundGuid };
+          }
+        }
         const durable = await deliverInboundReplyWithMessageSendContext({
           cfg,
           channel: "imessage",
           accountId: accountInfo.accountId,
           agentId: decision.route.agentId,
           ctxPayload,
-          payload,
+          payload: replyPayload,
           info,
           to: target,
           deps: {
@@ -1330,7 +1341,24 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
         });
       },
       onError: (err, info) => {
-        runtime.error?.(danger(`imessage ${info.kind} reply failed: ${String(err)}`));
+        const errMsg = String(err instanceof Error ? err.message : err);
+        runtime.error?.(danger(`imessage ${info.kind} reply failed: ${errMsg}`));
+        const errorTarget = ctxPayload.To;
+        if (!errorTarget) {
+          runtime.error?.(danger("imessage: missing error reply target"));
+          return;
+        }
+        const errorReplyToId = ctxPayload.MessageSidFull ?? ctxPayload.MessageSid;
+        void sendMessageIMessage(errorTarget, `⚠️ 🛠️ Reply delivery failed: ${errMsg}`, {
+          config: cfg,
+          accountId: accountInfo.accountId,
+          maxBytes: mediaMaxBytes,
+          ...(errorReplyToId ? { replyToId: errorReplyToId } : {}),
+        }).catch((sendErr: unknown) => {
+          runtime.error?.(
+            danger(`imessage: failed to send error reply to ${errorTarget}: ${String(sendErr)}`),
+          );
+        });
       },
     });
     let directTypingController: IMessageTypingController | undefined;

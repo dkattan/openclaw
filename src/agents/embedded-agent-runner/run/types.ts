@@ -119,6 +119,8 @@ export type EmbeddedRunAttemptResult = {
   timedOut: boolean;
   /** True when the no-response LLM idle watchdog caused the timeout. */
   idleTimedOut: boolean;
+  /** Resolved idle-timeout ceiling in ms (0 = watchdog disabled). Surfaces in timeout diagnostics. */
+  idleTimeoutMs?: number;
   /** True if the timeout occurred while compaction was in progress or pending. */
   timedOutDuringCompaction: boolean;
   /** Optional because this type is re-exported as `AgentHarnessAttemptResult`. */
