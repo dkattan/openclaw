@@ -31,7 +31,6 @@ if [ "$BRANCH" = "gitbutler/workspace" ]; then
     exit 1
 fi
 
-<<<<<<< New base: fix(imessage): thread replies via send-rich when replyToId is set
 GIT_DIR="$(git rev-parse --git-dir 2>/dev/null || true)"
 if [[ -n "$GIT_DIR" ]] && \
   { [[ -f "$GIT_DIR/MERGE_HEAD" ]] || \
@@ -42,38 +41,6 @@ if [[ -n "$GIT_DIR" ]] && \
     [[ -d "$GIT_DIR/rebase-apply" ]]; }; then
   # Sequencer commits stage the operation result, not just the user's local edits.
   exit 0
-fi
-
-# Security: avoid option-injection from malicious file names (e.g. "--all", "--force").
-# Robustness: NUL-delimited file list handles spaces/newlines safely.
-# Compatibility: use read loops instead of `mapfile` so this runs on macOS Bash 3.x.
-files=()
-while IFS= read -r -d '' file; do
-  files+=("$file")
-done < <(git diff --cached --name-only --diff-filter=ACMR -z)
-
-if [ "${#files[@]}" -eq 0 ]; then
-  exit 0
-||||||| Common ancestor
-# Security: avoid option-injection from malicious file names (e.g. "--all", "--force").
-# Robustness: NUL-delimited file list handles spaces/newlines safely.
-# Compatibility: use read loops instead of `mapfile` so this runs on macOS Bash 3.x.
-files=()
-while IFS= read -r -d '' file; do
-  files+=("$file")
-done < <(git diff --cached --name-only --diff-filter=ACMR -z)
-
-if [ "${#files[@]}" -eq 0 ]; then
-  exit 0
-=======
-# Not on workspace branch - run user's original hook if it exists
-if [ -x "$HOOKS_DIR/pre-commit-user" ]; then
-    echo ""
-    echo "WARNING: GitButler's pre-commit hook is still installed but you're not on gitbutler/workspace."
-    echo "If you're no longer using GitButler, you can restore your original hook:"
-    printf '  mv "%s/pre-commit-user" "%s/pre-commit"\n' "$HOOKS_DIR" "$HOOKS_DIR"
-    echo ""
->>>>>>> Current commit: fix(imessage): thread replies via send-rich when replyToId is set
 fi
 
 exit 0
