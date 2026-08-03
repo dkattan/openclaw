@@ -43,6 +43,11 @@ const IMessageAccountSchemaBase = z
     }),
     cliPath: ExecutableTokenSchema.optional(),
     dbPath: z.string().optional(),
+    rpcEndpoint: z
+      .string()
+      .url()
+      .refine((v) => new URL(v).protocol === "tcp:", "rpcEndpoint must use tcp:// protocol")
+      .optional(),
     remoteHost: z
       .string()
       .refine(isSafeScpRemoteHost, "expected SSH host or user@host (no spaces/options)")

@@ -22,6 +22,7 @@ import type { IMessageTarget } from "./targets.js";
 type CliRunOptions = {
   cliPath: string;
   dbPath?: string;
+  rpcEndpoint?: string;
   timeoutMs?: number;
 };
 
@@ -271,6 +272,7 @@ export const imessageActionsRuntime = {
     const client = await createIMessageRpcClient({
       cliPath: params.options.cliPath,
       dbPath: params.options.dbPath,
+      rpcEndpoint: params.options.rpcEndpoint,
     });
     try {
       const result = await client.request<IMessageChatListResponse>(

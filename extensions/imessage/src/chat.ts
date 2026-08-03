@@ -12,6 +12,7 @@ type ChatActionOpts = {
   client?: IMessageRpcClient;
   cliPath?: string;
   dbPath?: string;
+  rpcEndpoint?: string;
   service?: IMessageService;
   region?: string;
   timeoutMs?: number;
@@ -57,7 +58,8 @@ async function runChatAction<T>(
   const account = opts.account ?? resolveIMessageAccount({ cfg, accountId: opts.accountId });
   const cliPath = opts.cliPath?.trim() || account.config.cliPath?.trim() || "imsg";
   const dbPath = opts.dbPath?.trim() || account.config.dbPath?.trim();
-  const client = opts.client ?? (await createIMessageRpcClient({ cliPath, dbPath }));
+  const rpcEndpoint = opts.rpcEndpoint?.trim() || account.config.rpcEndpoint?.trim();
+  const client = opts.client ?? (await createIMessageRpcClient({ cliPath, dbPath, rpcEndpoint }));
   const shouldClose = !opts.client;
   try {
     return await client.request<T>(method, params, { timeoutMs: opts.timeoutMs });

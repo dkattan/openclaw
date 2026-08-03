@@ -1,5 +1,7 @@
 // Imessage plugin module implements client behavior.
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { type Socket, connect as netConnect } from "node:net";
+import type { Writable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
@@ -30,6 +32,7 @@ type IMessageRpcNotification = {
 type IMessageRpcClientOptions = {
   cliPath?: string;
   dbPath?: string;
+  rpcEndpoint?: string;
   runtime?: RuntimeEnv;
   onNotification?: (msg: IMessageRpcNotification) => void;
 };
@@ -62,12 +65,14 @@ function normalizeIMessageFullDiskAccessError(message: string): string | undefin
 export class IMessageRpcClient {
   private readonly cliPath: string;
   private readonly dbPath?: string;
+  private readonly rpcEndpoint?: string;
   private readonly runtime?: RuntimeEnv;
   private readonly onNotification?: (msg: IMessageRpcNotification) => void;
   private readonly pending = new Map<string, PendingRequest>();
   private readonly closed: Promise<void>;
   private closedResolve: (() => void) | null = null;
   private child: ChildProcessWithoutNullStreams | null = null;
+  private socket: Socket | null = null;
   private stdoutBuffer = "";
   private readonly stdoutDecoder = new StringDecoder("utf8");
   private stderrBuffer = "";
@@ -78,6 +83,7 @@ export class IMessageRpcClient {
   constructor(opts: IMessageRpcClientOptions = {}) {
     this.cliPath = opts.cliPath?.trim() || "imsg";
     this.dbPath = opts.dbPath?.trim() ? resolveUserPath(opts.dbPath) : undefined;
+    this.rpcEndpoint = opts.rpcEndpoint?.trim() || undefined;
     this.runtime = opts.runtime;
     this.onNotification = opts.onNotification;
     this.closed = new Promise((resolve) => {
@@ -86,12 +92,80 @@ export class IMessageRpcClient {
   }
 
   async start(): Promise<void> {
-    if (this.child) {
+    if (this.child || this.socket) {
       return;
     }
     if (isTestEnv()) {
       throw new Error("Refusing to start imsg rpc in test environment; mock iMessage RPC client");
     }
+    if (this.rpcEndpoint) {
+      await this.startSocketTransport();
+    } else {
+      this.startChildTransport();
+    }
+  }
+
+  private async startSocketTransport(): Promise<void> {
+    const endpoint = this.rpcEndpoint!;
+    let url: URL;
+    try {
+      url = new URL(endpoint);
+    } catch {
+      throw new Error(`imsg rpc: invalid rpcEndpoint URL "${endpoint}"`);
+    }
+    if (url.protocol !== "tcp:") {
+      throw new Error(`imsg rpc: rpcEndpoint must use tcp:// protocol, got "${url.protocol}"`);
+    }
+    const port = Number(url.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error(`imsg rpc: rpcEndpoint has invalid port "${url.port}"`);
+    }
+    const host = url.hostname;
+    await new Promise<void>((resolve, reject) => {
+      let connected = false;
+      const socket = netConnect({ port, host }, () => {
+        connected = true;
+        resolve();
+      });
+      this.socket = socket;
+
+      socket.on("data", (chunk) => {
+        if (this.socket !== socket) {
+          return;
+        }
+        this.handleStdoutChunk(chunk);
+      });
+
+      const failFromTransportError = (err: unknown) => {
+        if (!connected) {
+          reject(err instanceof Error ? err : new Error(String(err)));
+          return;
+        }
+        if (!this.finish(err instanceof Error ? err : new Error(String(err)))) {
+          return;
+        }
+        try {
+          socket.destroy();
+        } catch {
+          // The socket may already be gone.
+        }
+      };
+      socket.on("error", failFromTransportError);
+
+      socket.on("close", (hadError) => {
+        if (!connected) {
+          reject(new Error("imsg rpc: connection closed before establishing"));
+          return;
+        }
+        if (this.socket === socket) {
+          this.flushStdoutBuffer();
+        }
+        this.finish(this.buildCloseError(hadError ? 1 : 0, null));
+      });
+    });
+  }
+
+  private startChildTransport(): void {
     const args = ["rpc", "--json"];
     if (this.dbPath) {
       args.push("--db", this.dbPath);
@@ -145,16 +219,24 @@ export class IMessageRpcClient {
   }
 
   async stop(): Promise<void> {
-    if (!this.child) {
+    if (!this.child && !this.socket) {
       return;
     }
     this.stdoutBuffer = "";
     this.stdoutDecoder.end();
     this.stderrBuffer = "";
     this.stderrDecoder.end();
-    this.child.stdin?.end();
+
     const child = this.child;
+    const socket = this.socket;
     this.child = null;
+    this.socket = null;
+
+    if (child) {
+      child.stdin?.end();
+    } else if (socket) {
+      socket.end();
+    }
 
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -162,8 +244,10 @@ export class IMessageRpcClient {
         this.closed,
         new Promise<void>((resolve) => {
           timeout = setTimeout(() => {
-            if (!child.killed) {
+            if (child && !child.killed) {
               child.kill("SIGTERM");
+            } else if (socket && !socket.destroyed) {
+              socket.destroy();
             }
             resolve();
           }, 500);
@@ -171,7 +255,7 @@ export class IMessageRpcClient {
       ]);
     } finally {
       // A losing fallback still holds Node's event loop open; clear it when
-      // the child closes first so short-lived RPC clients can exit promptly.
+      // the transport closes first so short-lived RPC clients can exit promptly.
       if (timeout) {
         clearTimeout(timeout);
       }
@@ -187,7 +271,8 @@ export class IMessageRpcClient {
     params?: Record<string, unknown>,
     opts?: { timeoutMs?: number },
   ): Promise<T> {
-    if (!this.child || !this.child.stdin) {
+    const writable = this.getWritable();
+    if (!writable) {
       throw new Error("imsg rpc not running");
     }
     const id = this.nextId++;
@@ -218,7 +303,7 @@ export class IMessageRpcClient {
 
     // Reject the specific pending request on write error (e.g. EPIPE)
     // instead of letting it hang until timeout. (#75438)
-    this.child.stdin.write(line, (err) => {
+    writable.write(line, (err) => {
       if (err) {
         const key = String(id);
         const pending = this.pending.get(key);
@@ -232,6 +317,16 @@ export class IMessageRpcClient {
       }
     });
     return await response;
+  }
+
+  private getWritable(): Writable | null {
+    if (this.child?.stdin) {
+      return this.child.stdin;
+    }
+    if (this.socket && !this.socket.destroyed) {
+      return this.socket;
+    }
+    return null;
   }
 
   private handleStdoutChunk(chunk: Buffer | string) {

@@ -53,6 +53,7 @@ type IMessageSendTransport = "auto" | "bridge" | "applescript";
 type IMessageSendOpts = {
   cliPath?: string;
   dbPath?: string;
+  rpcEndpoint?: string;
   service?: IMessageService;
   region?: string;
   accountId?: string;
@@ -694,6 +695,7 @@ export async function sendMessageIMessage(
     });
   const cliPath = opts.cliPath?.trim() || account.config.cliPath?.trim() || "imsg";
   const dbPath = opts.dbPath?.trim() || account.config.dbPath?.trim();
+  const rpcEndpoint = opts.rpcEndpoint?.trim() || account.config.rpcEndpoint?.trim();
   const chatDbLookupPath = resolveIMessageChatDbLookupPath({
     cliPath,
     dbPath,
@@ -858,7 +860,7 @@ export async function sendMessageIMessage(
     opts.client ??
     (opts.createClient
       ? await opts.createClient({ cliPath, dbPath })
-      : await createIMessageRpcClient({ cliPath, dbPath }));
+      : await createIMessageRpcClient({ cliPath, dbPath, rpcEndpoint }));
   const shouldClose = !opts.client;
   let closedClient = false;
   const stopOwnedClient = async () => {

@@ -42,6 +42,7 @@ export type IMessageProbe = BaseProbeResult & {
 export type IMessageProbeOptions = {
   cliPath?: string;
   dbPath?: string;
+  rpcEndpoint?: string;
   forceRefresh?: boolean;
   platform?: NodeJS.Platform;
   runtime?: RuntimeEnv;
@@ -331,6 +332,7 @@ export async function probeIMessage(
   const explicitCliPath = opts.cliPath?.trim() || cfg?.channels?.imessage?.cliPath?.trim();
   const cliPath = explicitCliPath || "imsg";
   const dbPath = opts.dbPath?.trim() || cfg?.channels?.imessage?.dbPath?.trim();
+  const rpcEndpoint = opts.rpcEndpoint?.trim() || cfg?.channels?.imessage?.rpcEndpoint?.trim();
   // Use explicit timeout if provided, otherwise fall back to config, then default
   const effectiveTimeout =
     timeoutMs ?? cfg?.channels?.imessage?.probeTimeoutMs ?? DEFAULT_IMESSAGE_PROBE_TIMEOUT_MS;
@@ -369,6 +371,7 @@ export async function probeIMessage(
   const client = await createIMessageRpcClient({
     cliPath,
     dbPath,
+    rpcEndpoint,
     runtime: opts.runtime,
   });
   try {

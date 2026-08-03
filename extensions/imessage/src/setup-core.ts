@@ -69,6 +69,7 @@ const SERVICE_ALLOWFROM_PREFIXES = ["imessage:", "sms:", "auto:"];
 type IMessageSetupInput = ChannelSetupInput & {
   cliPath?: string;
   dbPath?: string;
+  rpcEndpoint?: string;
   service?: "imessage" | "sms" | "auto";
   region?: string;
 };
@@ -105,6 +106,7 @@ function buildIMessageSetupPatch(input: IMessageSetupInput) {
   return {
     ...(input.cliPath ? { cliPath: input.cliPath } : {}),
     ...(input.dbPath ? { dbPath: input.dbPath } : {}),
+    ...(input.rpcEndpoint ? { rpcEndpoint: input.rpcEndpoint } : {}),
     ...(input.service ? { service: input.service } : {}),
     ...(input.region ? { region: input.region } : {}),
   };
@@ -196,7 +198,7 @@ export const imessageSetupAdapter: ChannelSetupAdapter = {
     channelKey: channel,
     buildPatch: (input) => buildIMessageSetupPatch(input as IMessageSetupInput),
   }),
-  singleAccountKeysToMove: ["cliPath", "dbPath", "service", "region"],
+  singleAccountKeysToMove: ["cliPath", "dbPath", "rpcEndpoint", "service", "region"],
 };
 
 export const imessageSetupContract = defineChannelSetupContract({
@@ -208,6 +210,13 @@ export const imessageSetupContract = defineChannelSetupContract({
     dbPath: {
       kind: "string",
       cli: { flags: "--db-path <path>", description: "iMessage database path" },
+    },
+    rpcEndpoint: {
+      kind: "string",
+      cli: {
+        flags: "--rpc-endpoint <url>",
+        description: "External imsg RPC server endpoint (tcp://host:port)",
+      },
     },
     service: {
       kind: "choice",

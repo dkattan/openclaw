@@ -40,6 +40,14 @@ export type IMessageAccountConfig = Omit<
     cliPath?: string;
     /** Optional Messages db path override. */
     dbPath?: string;
+    /**
+     * External imsg RPC server endpoint (tcp://host:port). When set, the
+     * gateway connects to an already-running `imsg rpc` server over TCP
+     * instead of spawning `imsg rpc` as a child process. This bypasses the
+     * CFRunLoop/launchd hang that prevents `imsg rpc` dispatch sources from
+     * firing under launchd's Mach bootstrap namespace.
+     */
+    rpcEndpoint?: string;
     /** Remote SSH host token for SCP attachment fetches (`host` or `user@host`). */
     remoteHost?: string;
     /** Enable or disable private API message actions. */
