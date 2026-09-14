@@ -414,27 +414,6 @@ export function resolveIMessageThreadReplyToId(
   return resolved;
 }
 
-export function resolveIMessageReplyToGuid(
-  messageId: string | undefined,
-  opts?: { chatContext?: IMessageChatContext },
-): string | undefined {
-  const trimmed = normalizeOptionalString(messageId);
-  if (!trimmed) {
-    return undefined;
-  }
-  hydrateFromStoreOnce();
-  const cached = imessageReplyCacheByMessageId.get(trimmed);
-  if (!cached) {
-    return undefined;
-  }
-  if (opts?.chatContext && hasChatScope(opts.chatContext)) {
-    if (isCrossChatMismatch(cached, opts.chatContext)) {
-      return undefined;
-    }
-  }
-  return normalizeOptionalString(cached.replyToGuid);
-}
-
 export function isKnownFromMeIMessageMessageId(
   messageId: string | undefined,
   ctx: IMessageChatContext & { accountId?: string },

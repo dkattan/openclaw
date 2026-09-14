@@ -184,9 +184,7 @@ function normalizeReplyField(value: unknown): string | undefined {
 function describeReplyContext(message: IMessagePayload): IMessageReplyContext | null {
   const body = normalizeReplyField(message.reply_to_text) ?? "";
   // Upstream semantics: thread_originator_guid is authoritative, then reply_to_guid.
-  // reply_to_id (PR addition) stays first as a provider-supplied short id when present.
   const id =
-    normalizeReplyField(message.reply_to_id) ??
     normalizeReplyField(message.thread_originator_guid) ??
     normalizeReplyField(message.reply_to_guid);
   const fullId = normalizeReplyField(message.reply_to_guid);
