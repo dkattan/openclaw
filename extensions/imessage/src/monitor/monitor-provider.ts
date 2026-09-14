@@ -227,6 +227,7 @@ async function resolveIMessageStartupRowidWatermark(dbPath: string): Promise<num
     | undefined;
   try {
     database = openNodeSqliteDatabase(dbPath, { readOnly: true });
+    // SAFETY: node sqlite's untyped .get() returns unknown; the MAX(ROWID) row is shaped below.
     const row = database.prepare("SELECT MAX(ROWID) AS maxRowid FROM message").get() as
       | { maxRowid?: unknown }
       | undefined;
@@ -645,6 +646,7 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
   function resolveLiveCatchupCursor(
     message: IMessagePayload,
   ): { lastSeenMs: number; lastSeenRowid: number } | null {
+    // SAFETY: coalescedCatchupCursor is an optional producer-side extension field, read defensively below.
     const coalescedCursor = (
       message as {
         coalescedCatchupCursor?: { lastSeenMs?: unknown; lastSeenRowid?: unknown };
