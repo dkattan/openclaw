@@ -402,38 +402,16 @@ export function resolveIMessageThreadReplyToId(
     }
     const next = normalizeOptionalString(cached.threadReplyToId);
     if (!next || next === current) {
-      // When next === current, the message IS the thread root.
-      // Return it so callers get a valid root GUID instead of undefined.
-      if (next === current) {
-        resolved = current;
-      }
+      // The message has no threadReplyToId (it's a top-level message, not a
+      // reply) or it points to itself. Either way, this message IS the thread
+      // root. Return it so callers get a valid root GUID.
+      resolved = current;
       break;
     }
     resolved = next;
     current = next;
   }
   return resolved;
-}
-
-export function resolveIMessageReplyToGuid(
-  messageId: string | undefined,
-  opts?: { chatContext?: IMessageChatContext },
-): string | undefined {
-  const trimmed = normalizeOptionalString(messageId);
-  if (!trimmed) {
-    return undefined;
-  }
-  hydrateFromStoreOnce();
-  const cached = imessageReplyCacheByMessageId.get(trimmed);
-  if (!cached) {
-    return undefined;
-  }
-  if (opts?.chatContext && hasChatScope(opts.chatContext)) {
-    if (isCrossChatMismatch(cached, opts.chatContext)) {
-      return undefined;
-    }
-  }
-  return normalizeOptionalString(cached.replyToGuid);
 }
 
 export function isKnownFromMeIMessageMessageId(
