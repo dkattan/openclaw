@@ -11,6 +11,7 @@ import { expect, it, vi } from "vitest";
 import { IMessageRpcClient, createIMessageRpcClient } from "./client.js";
 import { monitorIMessageProvider } from "./monitor.js";
 import { resolveIMessageInboundDecision } from "./monitor/inbound-processing.js";
+import type { IMessagePayload } from "./monitor/types.js";
 import { getIMessageRuntime } from "./runtime.js";
 import { installIMessageStateRuntimeForTest } from "./test-support/runtime.js";
 
@@ -29,7 +30,7 @@ vi.mock("./monitor/inbound-processing.js", async (importOriginal) => ({
   })),
 }));
 
-it("changes iMessage batching delay without replacing the attached RPC client", async () => {
+it("batches iMessage text and attachments with live delay changes on the attached RPC client", async () => {
   installIMessageStateRuntimeForTest();
   const cfg: OpenClawConfig = {
     channels: {
@@ -64,7 +65,7 @@ it("changes iMessage batching delay without replacing the attached RPC client", 
     },
   });
   let sequence = 0;
-  const enqueue = (text: string) => {
+  const enqueue = (text: string, extra: Partial<IMessagePayload> = {}) => {
     sequence += 1;
     notify?.({
       method: "message",
@@ -78,6 +79,7 @@ it("changes iMessage batching delay without replacing the attached RPC client", 
           created_at: new Date().toISOString(),
           is_from_me: false,
           is_group: false,
+          ...extra,
         },
       },
     });
@@ -102,11 +104,50 @@ it("changes iMessage batching delay without replacing the attached RPC client", 
     expect(bodies()).toEqual(["immediate"]);
     await vi.waitFor(() => expect(bodies()).toEqual(["immediate", "first second"]));
     const delayedElapsedMs = performance.now() - started;
+    const attachment = {
+      original_path: "/Users/test/Library/Messages/Attachments/photo.png",
+      mime_type: "image/png",
+      missing: false,
+    };
+    for (const imageFirst of [true, false]) {
+      publish(7000);
+      const before = bodies();
+      const caption = imageFirst ? "describe this image" : "inspect this screenshot";
+      const first = imageFirst ? { text: "", attachments: [attachment] } : { text: caption };
+      const second = imageFirst ? { text: caption } : { text: "", attachments: [attachment] };
+      const batchStarted = performance.now();
+      enqueue(first.text, first);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(bodies()).toEqual(before);
+      await new Promise((resolve) => setTimeout(resolve, 3400));
+      const lastArrival = performance.now();
+      enqueue(second.text, second);
+      // Past the first message's deadline, but still inside the second one's window.
+      await new Promise((resolve) => setTimeout(resolve, 3750));
+      expect(bodies()).toEqual(before);
+      await vi.waitFor(() => expect(bodies()).toEqual([...before, caption]), { timeout: 5000 });
+      expect(performance.now() - lastArrival).toBeGreaterThanOrEqual(6950);
+      const combined = vi.mocked(resolveIMessageInboundDecision).mock.lastCall?.[0].message;
+      expect(combined?.attachments).toEqual([attachment]);
+      expect(combined?.guid).toBe(`debounce-${sequence - 1}`);
+      console.log(
+        "IMESSAGE_MEDIA_DEBOUNCE_PROOF " +
+          JSON.stringify({
+            imageFirst,
+            debounceMs: 7000,
+            elapsedMs: performance.now() - batchStarted,
+            dispatches: bodies().length - before.length,
+            attachments: combined?.attachments?.length,
+          }),
+      );
+    }
+    const beforeCommand = bodies();
+    enqueue("/stop", { attachments: [attachment] });
+    await vi.waitFor(() => expect(bodies()).toEqual([...beforeCommand, "/stop"]));
     publish(0);
-    enqueue("after disable");
-    await vi.waitFor(() =>
-      expect(bodies()).toEqual(["immediate", "first second", "after disable"]),
-    );
+    const beforeDisable = bodies();
+    enqueue("after disable", { attachments: [attachment] });
+    await vi.waitFor(() => expect(bodies()).toEqual([...beforeDisable, "after disable"]));
     console.log(
       "MONITOR_DEBOUNCE_PROOF " +
         JSON.stringify({
@@ -127,4 +168,4 @@ it("changes iMessage batching delay without replacing the attached RPC client", 
     closeOpenClawStateDatabaseForTest();
     vi.restoreAllMocks();
   }
-});
+}, 35000);

@@ -111,7 +111,12 @@ async function probePortOnHost(
     if (isErrno(err) && err.code === "EADDRINUSE") {
       return "busy";
     }
-    if (isErrno(err) && (err.code === "EADDRNOTAVAIL" || err.code === "EAFNOSUPPORT")) {
+    if (
+      isErrno(err) &&
+      (err.code === "EADDRNOTAVAIL" || err.code === "EAFNOSUPPORT" || err.code === "EACCES")
+    ) {
+      // EACCES on privileged ports means the process lacks permission to bind
+      // to that specific interface, not that the port is in use.
       return "skip";
     }
     return "unknown";

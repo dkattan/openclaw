@@ -44,6 +44,7 @@ import { resolveIMessageGroupSystemPrompt } from "../group-policy.js";
 import {
   isKnownFromMeIMessageMessageId,
   rememberIMessageReplyCache,
+  resolveIMessageThreadReplyToId,
 } from "../monitor-reply-cache.js";
 import { getIMessageRuntime } from "../runtime.js";
 import {
@@ -68,8 +69,10 @@ type IMessageReactionNotificationMode = "off" | "own" | "all";
 
 type IMessageReplyContext = {
   id?: string;
+  fullId?: string;
   body: string;
   sender?: string;
+  threadOriginatorId?: string;
 };
 
 const normalizeNonEmpty = (value: string) => value.trim() || null;
@@ -183,15 +186,31 @@ function normalizeReplyField(value: unknown): string | undefined {
 }
 
 function describeReplyContext(message: IMessagePayload): IMessageReplyContext | null {
-  const body = normalizeReplyField(message.reply_to_text);
-  if (!body) {
+  const sender = normalizeReplyField(message.reply_to_sender);
+  const threadOriginatorId = normalizeReplyField(message.thread_originator_guid);
+  const directReplyToGuid = normalizeReplyField(message.reply_to_guid);
+  // Prefer the DIRECT reply parent (reply_to_guid) over the thread root for
+  // the quoted body. imsg resolves reply_to_text from thread_originator_guid
+  // first, so inside an iOS reply thread every message quotes the (possibly
+  // hours-old) thread root rather than the message actually being answered;
+  // an agent that already answered that root then sees it re-quoted as "the
+  // reply target" on every later turn and re-recaps it (the duplicate-recap
+  // loop of 2026-09-18). Keep the quote only when the direct parent IS the
+  // thread root (or is unknown); otherwise drop the body and keep the
+  // structural ids — the direct parent is nearly always the previous bubble,
+  // which the conversation history already shows, and the thread root stays
+  // available for threading via threadOriginatorId.
+  const bodyIsStaleThreadRootQuote =
+    threadOriginatorId != null &&
+    directReplyToGuid != null &&
+    directReplyToGuid !== threadOriginatorId;
+  const body = bodyIsStaleThreadRootQuote ? "" : (normalizeReplyField(message.reply_to_text) ?? "");
+  const id = normalizeReplyField(message.reply_to_id) ?? directReplyToGuid ?? threadOriginatorId;
+  const fullId = directReplyToGuid;
+  if (!body && !id && !fullId && !sender && !threadOriginatorId) {
     return null;
   }
-  const id =
-    normalizeReplyField(message.thread_originator_guid) ??
-    normalizeReplyField(message.reply_to_guid);
-  const sender = normalizeReplyField(message.reply_to_sender);
-  return { body, id, sender };
+  return { body, id, fullId, sender, threadOriginatorId };
 }
 
 function resolveInboundEchoMessageIds(message: IMessagePayload): string[] {
@@ -348,6 +367,10 @@ type IMessageInboundDispatchDecision = {
   agentBodyText?: string;
   createdAt?: number;
   replyContext: IMessageReplyContext | null;
+  replyToIdFull?: string;
+  directReplyToGuid?: string;
+  threadParentId?: string;
+  messageThreadId?: string;
   effectiveWasMentioned: boolean;
   groupRequireMention: boolean;
   commandAuthorized: boolean;
@@ -726,6 +749,18 @@ export async function resolveIMessageInboundDecision(params: {
   }
 
   const replyContext = describeReplyContext(params.message);
+  const inboundMessageGuid = normalizeReplyField(params.message.guid);
+  const threadOriginatorId = replyContext?.threadOriginatorId;
+  const threadParentId = threadOriginatorId
+    ? (replyContext?.fullId ?? inboundMessageGuid)
+    : inboundMessageGuid;
+  const rawReplyToFullId = threadOriginatorId ?? threadParentId;
+  const replyToIdFull = rawReplyToFullId
+    ? (resolveIMessageThreadReplyToId(rawReplyToFullId, {
+        chatContext: { chatId, chatGuid, chatIdentifier },
+      }) ?? rawReplyToFullId)
+    : undefined;
+  const messageThreadId = replyContext?.threadOriginatorId ?? replyToIdFull;
   const contextVisibilityMode = resolveChannelContextVisibilityMode({
     cfg: params.cfg,
     channel: "imessage",
@@ -754,7 +789,8 @@ export async function resolveIMessageInboundDecision(params: {
     replyContext
       ? {
           id: replyContext.id,
-          body: replyContext.body,
+          fullId: replyContext.fullId,
+          ...(replyContext.body ? { body: replyContext.body } : {}),
           sender: replyContext.sender,
           senderAllowed: replySenderAllowed,
         }
@@ -763,6 +799,7 @@ export async function resolveIMessageInboundDecision(params: {
   const filteredReplyContext = visibleReply
     ? {
         id: visibleReply.id,
+        fullId: visibleReply.fullId,
         body: visibleReply.body ?? "",
         sender: visibleReply.sender,
       }
@@ -859,6 +896,10 @@ export async function resolveIMessageInboundDecision(params: {
     bodyText,
     createdAt,
     replyContext: filteredReplyContext,
+    replyToIdFull,
+    directReplyToGuid: threadParentId,
+    threadParentId,
+    messageThreadId,
     effectiveWasMentioned,
     groupRequireMention: requireMention,
     commandAuthorized,
@@ -897,6 +938,8 @@ export async function buildIMessageInboundContext(params: {
   const chatTarget =
     decision.isGroup && chatId != null ? formatIMessageChatTarget(chatId) : undefined;
   const messageGuid = normalizeReplyField(params.message.guid);
+  const threadReplyToId = decision.replyToIdFull;
+  const directReplyToGuid = decision.directReplyToGuid;
   const rememberedMessage = messageGuid
     ? await rememberIMessageReplyCache({
         accountId: decision.route.accountId,
@@ -905,6 +948,8 @@ export async function buildIMessageInboundContext(params: {
         chatIdentifier: decision.chatIdentifier,
         chatId: decision.chatId,
         timestamp: Date.now(),
+        ...(threadReplyToId ? { threadReplyToId } : {}),
+        ...(directReplyToGuid ? { replyToGuid: directReplyToGuid } : {}),
         isFromMe: false,
       })
     : null;
@@ -919,7 +964,7 @@ export async function buildIMessageInboundContext(params: {
   const replySuffix = decision.replyContext
     ? `\n\n[Replying to ${decision.replyContext.sender ?? "unknown sender"}${
         decision.replyContext.id ? ` id:${decision.replyContext.id}` : ""
-      }]\n${decision.replyContext.body}\n[/Replying]`
+      }]${decision.replyContext.body ? `\n${decision.replyContext.body}` : ""}\n[/Replying]`
     : "";
 
   const senderDisplayName = normalizeNonEmpty(params.message.sender_name ?? "");
@@ -1015,6 +1060,7 @@ export async function buildIMessageInboundContext(params: {
       quote: decision.replyContext
         ? {
             id: decision.replyContext.id,
+            fullId: decision.replyContext.fullId,
             body: decision.replyContext.body,
             sender: decision.replyContext.sender,
           }
@@ -1050,6 +1096,9 @@ export async function buildIMessageInboundContext(params: {
     },
     reply: {
       to: replyTarget,
+      replyToIdFull: decision.replyToIdFull,
+      messageThreadId: decision.messageThreadId,
+      threadParentId: decision.threadParentId,
     },
     message: {
       body: combinedBody,

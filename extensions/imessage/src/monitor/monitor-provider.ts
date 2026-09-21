@@ -17,6 +17,7 @@ import {
   bindIngressLifecycleToReplyOptions,
   createChannelMessageReplyPipeline,
   resolveChannelStreamingBlockEnabled,
+  resolveChannelStreamingProgressNarration,
 } from "openclaw/plugin-sdk/channel-outbound";
 import { createChannelPairingChallengeIssuer } from "openclaw/plugin-sdk/channel-pairing";
 import {
@@ -24,6 +25,7 @@ import {
   resolveChannelGroupsConfigPath,
 } from "openclaw/plugin-sdk/channel-policy";
 import { registerChannelRuntimeContext } from "openclaw/plugin-sdk/channel-runtime-context";
+import { isControlCommandMessage } from "openclaw/plugin-sdk/command-detection";
 import {
   ensureConfiguredBindingRouteReady,
   readChannelAllowFromStore,
@@ -115,6 +117,7 @@ import { createLoopRateLimiter } from "./loop-rate-limiter.js";
 import { stageIMessageAttachments } from "./media-staging.js";
 import { createPollCommentFolder } from "./poll-comment.js";
 import { renderIMessagePollBody } from "./poll-render.js";
+import { createIMessageProgressBubble, type IMessageProgressBubble } from "./progress-bubble.js";
 import { enqueueIMessageReactionSystemEvent } from "./reaction-system-event.js";
 import {
   advanceIMessageRecoveryCursor,
@@ -534,15 +537,15 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
         return false;
       }
 
-      // General same-sender inbound debounce: text-only, no control commands,
-      // no media. Off by default unless messages.inbound is configured.
-      return shouldDebounceTextInbound({
-        text: msg.text,
-        cfg,
-        hasMedia: Boolean(
-          msg.attachments?.some((attachment) => !isIMessagePluginPayloadAttachment(attachment)),
-        ),
-      });
+      const hasMedia = Boolean(
+        msg.attachments?.some((attachment) => !isIMessagePluginPayloadAttachment(attachment)),
+      );
+      // iMessage sends attachments separately from their accompanying text.
+      // Our flush merges full payloads, so media can share the configured window.
+      if (hasMedia) {
+        return !isControlCommandMessage(msg.text ?? undefined, readConfig());
+      }
+      return shouldDebounceTextInbound({ text: msg.text, cfg: readConfig(), hasMedia });
     },
     onFlush: (entries, createFlush) => {
       const { lifecycle, settle, abandon } = fanInChannelIngressLifecycles(
@@ -953,6 +956,7 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
         cliPath,
         dbPath,
         remoteHost,
+        ...(message.guid ? { messageGuid: message.guid } : {}),
       }).then(
         () => true,
         (err: unknown) => {
@@ -983,6 +987,7 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
               cliPath,
               dbPath,
               remoteHost,
+              ...(message.guid ? { messageGuid: message.guid } : {}),
             });
           })
           .catch((err: unknown) => {
@@ -1112,6 +1117,7 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
                   cliPath,
                   dbPath,
                   remoteHost,
+                  ...(ctxPayload.MessageSidFull ? { messageGuid: ctxPayload.MessageSidFull } : {}),
                 });
               },
               stop: async () => {
@@ -1122,6 +1128,7 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
                   cliPath,
                   dbPath,
                   remoteHost,
+                  ...(ctxPayload.MessageSidFull ? { messageGuid: ctxPayload.MessageSidFull } : {}),
                 });
               },
               // Keep the native typing bubble alive through long tool chains.
@@ -1177,6 +1184,10 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
             suppression: { reason: "no_visible_result" },
           } as const;
         }
+        // When the durable path returns "not_applicable" (e.g. new top-level
+        // message with no ReplyToIdFull), the fallback deliver callback fires
+        // with payload.replyToId undefined. Pass the inbound message GUID as
+        // a typed parameter so deliverIMessageReply can thread the reply.
         return await deliverIMessageReply({
           cfg,
           payload,
@@ -1186,6 +1197,7 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
           maxBytes: mediaMaxBytes,
           textLimit,
           sentMessageCache,
+          inboundMessageGuid: ctxPayload.MessageSidFull,
         });
       },
       onError: (err, info) => {
@@ -1225,6 +1237,46 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
         } as const)
       : {};
     const configuredBlockStreaming = resolveChannelStreamingBlockEnabled(accountInfo.config);
+    // Narrated progress bubble: utility-model narration edited into a single
+    // persistent bubble per turn. Opt-in via streaming.progress.narration
+    // (same knob Discord uses); requires a delivery target and a utility
+    // model (resolved by core before the first narration fires).
+    const narrationEnabled =
+      resolveChannelStreamingProgressNarration(accountInfo.config) &&
+      sendPolicy !== "deny" &&
+      Boolean(ctxPayload.To);
+    let progressBubble: IMessageProgressBubble | undefined;
+    const progressBubbleOptions = narrationEnabled
+      ? {
+          // The narration bubble replaces per-tool status bubbles entirely.
+          suppressDefaultToolProgressMessages: true,
+          suppressToolProgressMessages: true,
+          // Feeder callbacks: the narrator wraps whatever callbacks exist on
+          // the options it attaches to, so narration needs these present even
+          // though the bubble renders nothing per tool call. They must claim
+          // visibility (true): a false return tells dispatch the channel did
+          // not accept progress, making it emit the default per-tool status
+          // bubble the narration bubble exists to replace.
+          onToolStart: async () => {
+            return true;
+          },
+          onCommandOutput: async () => true,
+          onItemEvent: async () => true,
+          onNarrationUpdate: async (payload: { text: string }) => {
+            progressBubble ??= createIMessageProgressBubble({
+              cfg,
+              accountId: accountInfo.accountId,
+              target: ctxPayload.To as string,
+              // Thread the bubble as a reply to the message the turn is
+              // working on; an unthreaded bubble in a group chat reads as
+              // the response itself and anchors later human replies.
+              replyToId: ctxPayload.MessageSidFull,
+              runtime,
+            });
+            await progressBubble.update(payload.text);
+          },
+        }
+      : {};
     const inboundLastRouteSessionKey = resolveInboundLastRouteSessionKey({
       route: decision.route,
       sessionKey: decision.route.sessionKey,
@@ -1299,9 +1351,18 @@ export async function monitorIMessageProvider(opts: MonitorIMessageOpts = {}): P
               typeof configuredBlockStreaming === "boolean" ? !configuredBlockStreaming : undefined,
             onModelSelected,
             ...directToolTypingOptions,
+            ...progressBubbleOptions,
           },
         }),
-        onFinalize: () => stopEarlyDirectTyping?.(),
+        onFinalize: () => {
+          stopEarlyDirectTyping?.();
+          // Retract the progress bubble once the turn fully settles; the
+          // final reply has already superseded it. Fire-and-forget: a slow
+          // unsend must not delay turn finalization.
+          void progressBubble?.dispose().finally(() => {
+            progressBubble = undefined;
+          });
+        },
       },
     });
   }

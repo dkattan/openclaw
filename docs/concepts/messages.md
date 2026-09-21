@@ -49,12 +49,12 @@ Rapid text messages from the same sender can be batched into one agent turn via 
 }
 ```
 
-- Debounce applies to text-only messages; media/attachments flush immediately.
+- Debounce generally applies to text-only messages; media/attachments flush immediately except on iMessage.
 - Control commands (stop/abort/status, etc.) bypass debouncing so they dispatch immediately.
 - Telegram batches ordinary text by default after a 300ms quiet window. Other channels have no generic debounce delay unless configured.
 - `messages.inbound.byChannel.<channel>` takes precedence over `messages.inbound.debounceMs`; either overrides the channel default. Set `0` to disable ordinary burst batching.
 - For non-forwarded Telegram text, messages of at least 4000 characters allow up to 1500ms for continuations. Short and long messages share the same batch, without requiring consecutive message IDs. This automatic long-paste assembly remains active when ordinary batching is disabled.
-- iMessage follows the same generic debounce policy. `imsg` 0.13.1 and newer coalesces Apple URL-preview split-sends before OpenClaw receives them, so no iMessage-specific debounce setting is needed.
+- iMessage batches text and attachments from the same sender and conversation using the configured inbound delay. Each arrival restarts the quiet window, so separately sent attachments and their accompanying text reach one agent turn together. Control commands still bypass the delay. `imsg` 0.13.1 and newer coalesces Apple URL-preview split-sends before OpenClaw receives them, so no iMessage-specific debounce setting is needed.
 
 Changes to `messages.inbound.debounceMs` and `messages.inbound.byChannel` apply without
 reconnecting Discord, Feishu, iMessage, Mattermost, Microsoft Teams, Signal, Slack,
