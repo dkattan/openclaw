@@ -199,15 +199,28 @@ describe("imessage monitor gating + envelope builders", () => {
   });
 
   it.each([
-    { parent: { reply_to_guid: "reply-parent" }, expected: "reply-parent" },
-    { parent: { thread_originator_guid: "thread-parent" }, expected: "thread-parent" },
     {
-      parent: { thread_originator_guid: "thread-parent", reply_to_guid: "reply-parent" },
+      parent: { reply_to_guid: "reply-parent" },
+      expected: "reply-parent",
+      body: "original message",
+    },
+    {
+      parent: { thread_originator_guid: "thread-parent" },
       expected: "thread-parent",
+      body: "original message",
+    },
+    {
+      // Direct parent wins for the reply target; the quoted body is dropped
+      // when it can only be the thread root's text (imsg resolves it from
+      // thread_originator_guid first), so a thread child does not re-quote a
+      // possibly hours-old root as the reply target on every turn.
+      parent: { thread_originator_guid: "thread-parent", reply_to_guid: "reply-parent" },
+      expected: "reply-parent",
+      body: "",
     },
   ])(
     "includes the authoritative reply parent, context fields, and suffix",
-    async ({ parent, expected }) => {
+    async ({ parent, expected, body }) => {
       const message: IMessagePayload = {
         id: 5,
         chat_id: 55,
@@ -222,10 +235,14 @@ describe("imessage monitor gating + envelope builders", () => {
       const ctxPayload = await buildDispatchContextPayload({ cfg: baseCfg(), message });
 
       expect(ctxPayload.ReplyToId).toBe(expected);
-      expect(ctxPayload.ReplyToBody).toBe("original message");
+      expect(ctxPayload.ReplyToBody).toBe(body);
       expect(ctxPayload.ReplyToSender).toBe("+15559998888");
       expect(ctxPayload.Body ?? "").toContain(`[Replying to +15559998888 id:${expected}]`);
-      expect(ctxPayload.Body ?? "").toContain("original message");
+      if (body) {
+        expect(ctxPayload.Body ?? "").toContain("original message");
+      } else {
+        expect(ctxPayload.Body ?? "").not.toContain("original message");
+      }
     },
   );
 

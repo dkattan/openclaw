@@ -1066,6 +1066,19 @@ describe("isMessagingToolDuplicate", () => {
       sentTexts: ["Checking the deploy logs now."],
       expected: true,
     },
+    {
+      // Paraphrased re-send: neither text contains the other, but the token
+      // overlap catches the re-stated summary (2026-09-18 duplicate recaps).
+      input: "recap: committed and pushed the fix, PR is live, want me to log the box out?",
+      sentTexts: ["quick recap before I continue: committed and pushed the fix, PR is live"],
+      expected: true,
+    },
+    {
+      // Unrelated messages that merely share a topic + a PR link stay distinct.
+      input: "the PR checks failed, I am re-running CI now",
+      sentTexts: ["committed and pushed the fix, PR is live"],
+      expected: false,
+    },
   ])("returns $expected for duplicate check", ({ input, sentTexts, expected }) => {
     expect(isMessagingToolDuplicate(input, sentTexts)).toBe(expected);
   });

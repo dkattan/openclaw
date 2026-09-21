@@ -5,6 +5,13 @@ import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/st
 
 const MIN_DUPLICATE_TEXT_LENGTH = 10;
 const MIN_SUBSTRING_DUPLICATE_RATIO = 0.5;
+// Paraphrased re-sends ("quick recap" vs "recap:") share most content words
+// without either text containing the other. A token-overlap fallback catches
+// those where the substring check cannot, e.g. a final reply re-stating a
+// message-tool send on the same route (2026-09-18 duplicate recaps). Scoring
+// is a symmetric Dice coefficient over whitespace tokens; the bar sits well
+// above unrelated messages sharing a greeting or a PR link.
+const MIN_TOKEN_OVERLAP_RATIO = 0.6;
 
 /**
  * Normalize text for duplicate comparison.
@@ -38,11 +45,41 @@ export function isMessagingToolDuplicateNormalized(
     if (normalized.includes(normalizedSent)) {
       return normalizedSent.length >= normalized.length * MIN_SUBSTRING_DUPLICATE_RATIO;
     }
-    return (
+    if (
       normalizedSent.includes(normalized) &&
       normalized.length >= normalizedSent.length * MIN_SUBSTRING_DUPLICATE_RATIO
-    );
+    ) {
+      return true;
+    }
+    return tokenOverlapRatio(normalized, normalizedSent) >= MIN_TOKEN_OVERLAP_RATIO;
   });
+}
+
+/** Dice coefficient over whitespace tokens of already-normalized texts. */
+function tokenOverlapRatio(left: string, right: string): number {
+  const stripTrailingPunctuation = (token: string) => token.replace(/[\p{P}]+$/u, "");
+  const leftTokens = left.split(" ").filter(Boolean).map(stripTrailingPunctuation).filter(Boolean);
+  const rightTokens = right
+    .split(" ")
+    .filter(Boolean)
+    .map(stripTrailingPunctuation)
+    .filter(Boolean);
+  if (leftTokens.length === 0 || rightTokens.length === 0) {
+    return 0;
+  }
+  const rightCounts = new Map<string, number>();
+  for (const token of rightTokens) {
+    rightCounts.set(token, (rightCounts.get(token) ?? 0) + 1);
+  }
+  let shared = 0;
+  for (const token of leftTokens) {
+    const remaining = rightCounts.get(token) ?? 0;
+    if (remaining > 0) {
+      shared += 1;
+      rightCounts.set(token, remaining - 1);
+    }
+  }
+  return (2 * shared) / (leftTokens.length + rightTokens.length);
 }
 
 /** Return true when raw message text duplicates a prior sent message. */

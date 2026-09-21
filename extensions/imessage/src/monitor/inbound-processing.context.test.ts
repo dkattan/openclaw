@@ -245,3 +245,76 @@ describe("resolveIMessageInboundDecision command auth", () => {
     });
   });
 });
+
+describe("describeReplyContext thread-root quote suppression", () => {
+  it("drops the quoted body when it can only be the stale thread root, keeping ids", async () => {
+    // iOS reply threads: reply_to_guid points at the direct parent bubble
+    // while thread_originator_guid stays pinned to the root. imsg resolves
+    // reply_to_text from the root first, so the payload body is the root's
+    // text. Quoting that root on every turn re-anchored already-answered
+    // asks (the 2026-09-18 duplicate-recap loop).
+    const message = {
+      id: 12350,
+      guid: "p:0/GUID-thread-child",
+      sender: "+15555550123",
+      text: "and now something new",
+      is_from_me: false,
+      is_group: false,
+      thread_originator_guid: "ROOT-GUID",
+      reply_to_guid: "PARENT-GUID",
+      reply_to_text: "Use immy MCP to check on the Claude session",
+      reply_to_sender: "+15555550123",
+    };
+    const decision = await resolveDecision({ message });
+    expect(decision.kind).toBe("dispatch");
+    if (decision.kind !== "dispatch") {
+      return;
+    }
+    expect(decision.replyContext?.body).toBe("");
+    expect(decision.replyContext?.fullId).toBe("PARENT-GUID");
+    expect(decision.replyContext?.id).toBe("PARENT-GUID");
+  });
+
+  it("keeps the quoted body when the direct parent IS the thread root", async () => {
+    const message = {
+      id: 12351,
+      guid: "p:0/GUID-thread-first-reply",
+      sender: "+15555550123",
+      text: "answering the root",
+      is_from_me: false,
+      is_group: false,
+      thread_originator_guid: "ROOT-GUID",
+      reply_to_guid: "ROOT-GUID",
+      reply_to_text: "Root ask body",
+      reply_to_sender: "+15555550123",
+    };
+    const decision = await resolveDecision({ message });
+    expect(decision.kind).toBe("dispatch");
+    if (decision.kind !== "dispatch") {
+      return;
+    }
+    expect(decision.replyContext?.body).toBe("Root ask body");
+    expect(decision.replyContext?.fullId).toBe("ROOT-GUID");
+  });
+
+  it("keeps the quoted body when only reply_to_guid is present (no thread root)", async () => {
+    const message = {
+      id: 12352,
+      guid: "p:0/GUID-plain-reply",
+      sender: "+15555550123",
+      text: "a plain reply",
+      is_from_me: false,
+      is_group: false,
+      reply_to_guid: "PARENT-GUID",
+      reply_to_text: "Parent body",
+      reply_to_sender: "+15555550123",
+    };
+    const decision = await resolveDecision({ message });
+    expect(decision.kind).toBe("dispatch");
+    if (decision.kind !== "dispatch") {
+      return;
+    }
+    expect(decision.replyContext?.body).toBe("Parent body");
+    expect(decision.replyContext?.fullId).toBe("PARENT-GUID");
+  });
+});

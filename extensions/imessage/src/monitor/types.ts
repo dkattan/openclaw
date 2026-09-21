@@ -49,6 +49,7 @@ export type IMessagePayload = {
   text?: string | null;
   // Thread origin owns quote identity; direct reply GUID also links poll captions.
   thread_originator_guid?: string | null;
+  reply_to_id?: string | null;
   reply_to_guid?: string | null;
   reply_to_text?: string | null;
   reply_to_sender?: string | null;
