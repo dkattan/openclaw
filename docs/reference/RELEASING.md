@@ -403,7 +403,7 @@ This checklist is the public shape of the release flow. Private credentials and 
 
 ### Fast path (default)
 
-Optional `OPENCLAW_RELEASE_RUNNER_GROUP` reserves configured capacity for the validation parent and its workers without changing default labels. See [runner reservation](/ci) before configuring it; shared workers inherit the group from the release caller.
+Optional `OPENCLAW_RELEASE_RUNNER_GROUP` reserves configured capacity for the validation parent and its workers without changing default labels. The same variable automatically routes the Release Publish parent and every publish child (npm, plugin npm, ClawHub, Docker, VCR); nothing per dispatch is needed. See [runner reservation](/ci) before configuring it; shared workers inherit the group from the release caller. Approval and credentialed publish jobs (npm trusted publishing, ClawHub, Docker) stay on default GitHub-hosted labels, and the hourly plugin npm preview never enters the group.
 
 After source admission, plugin compatibility readiness, and evidence reuse
 selection, normal CI, independent Plugin Prerelease, independent Release Checks,
@@ -662,11 +662,10 @@ Release runs are always prioritized over PR-side work on GitHub-hosted runners.
 The repo variable `OPENCLAW_RELEASE_PRIORITY_RUN` names the active Full Release
 Validation parent run id:
 
-- `pnpm ci:full-release` writes `.artifacts/frv-release-priority-<parent>.json`
-  (the pause window) and then sets the variable once the parent dispatch is
-  observed; it clears the variable when the operation ends, sealed or failed.
+- The validation dispatcher (`full-release-validation-at-sha`) no longer
+  writes the variable; only `pnpm frv prioritize --run` still sets it.
   `pnpm frv continue --failed` and `pnpm frv verify` clear it for the sealed
-  parent as well. A failure to set or clear the variable is a warning, never a
+  parent. A failure to set or clear the variable is a warning, never a
   validation failure.
 - While it is set, the root jobs of the hosted-runner workflows `CI`, `Auto
 response`, `PR context and evidence`, `Labeler`, the `CodeQL` workflows,
@@ -695,6 +694,12 @@ response`, `PR context and evidence`, `Labeler`, the `CodeQL` workflows,
   queued PR CI and ClawSweeper review runs, then restore them afterwards with
   `pnpm frv prioritize --restore <record>` or by re-running each open PR's
   latest cancelled CI run.
+
+The runner group expression reads the repository variable when each job is
+queued, so `gh run rerun` after changing the variable re-routes the rerun jobs.
+A workflow-shape test cannot prove GitHub's runtime evaluation: confirm
+`runner_group_name` for a rerun job with
+`gh api repos/openclaw/openclaw/actions/runs/<id>/jobs` rather than assuming it.
 
 ## Stable main closeout
 

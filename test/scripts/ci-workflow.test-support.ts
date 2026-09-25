@@ -77,6 +77,7 @@ export function evaluateWorkflowExpression(
     resolveTargetOutputs?: Record<string, string>;
     releaseGate?: boolean;
     releaseRunnerGroup?: string;
+    releasePublishRunId?: string;
     runnerGroup?: string;
     releasePriorityRun?: string;
     releaseScope?: string;
@@ -174,6 +175,7 @@ export function evaluateWorkflowExpression(
     inputs: {
       dispatch_id: context.dispatchId ?? "",
       runner_group: context.runnerGroup ?? "",
+      release_publish_run_id: context.releasePublishRunId ?? "",
       release_gate: context.releaseGate ?? false,
       release_scope: context.releaseScope ?? "full",
       target_context_ref: context.targetContextRef ?? "",
