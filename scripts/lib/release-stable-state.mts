@@ -47,7 +47,7 @@ const releaseStateSchema = z.strictObject({
     .strictObject({
       parentSyncsBetaDistTag: z.boolean(),
       parentSweepsStaleChildren: z.boolean().optional(),
-      parentApprovalReceipt: z.boolean(),
+      childNpmPublishEnvironment: z.boolean().optional(),
       closeoutResolvesWaivers: z.boolean(),
       probedAt: timestamp,
       toolingSha: sha,
@@ -101,6 +101,14 @@ const releaseStateSchema = z.strictObject({
   history: z.array(
     z.strictObject({ at: timestamp, phase: phaseSchema, event: z.string(), detail: z.string() }),
   ),
+});
+// Older writers recorded the retired parentApprovalReceipt capability; discard it on read.
+const releaseStateReadSchema = releaseStateSchema.extend({
+  capabilities: releaseStateSchema.shape.capabilities
+    .unwrap()
+    .extend({ parentApprovalReceipt: z.boolean().optional() })
+    .transform(({ parentApprovalReceipt: _parentApprovalReceipt, ...capabilities }) => capabilities)
+    .optional(),
 });
 export type ReleaseState = z.infer<typeof releaseStateSchema>;
 export type ReleaseOptions = {
@@ -301,7 +309,7 @@ export function loadReleaseState(options: ReleaseOptions): ReleaseState {
     return createReleaseState(options);
   }
   try {
-    const state = releaseStateSchema.parse(JSON.parse(readFileSync(path, "utf8")));
+    const state = releaseStateReadSchema.parse(JSON.parse(readFileSync(path, "utf8")));
     if (
       state.release !== options.release ||
       state.tag !== `v${options.release}` ||
@@ -478,7 +486,8 @@ export async function probeCapabilities(ctx: ReleaseContext, toolingSha: string)
   if (
     !ctx.options.dryRun &&
     ctx.state.capabilities?.toolingSha === toolingSha &&
-    ctx.state.capabilities.parentSweepsStaleChildren !== undefined
+    ctx.state.capabilities.parentSweepsStaleChildren !== undefined &&
+    ctx.state.capabilities.childNpmPublishEnvironment !== undefined
   ) {
     return;
   }
@@ -497,6 +506,11 @@ export async function probeCapabilities(ctx: ReleaseContext, toolingSha: string)
     ["show", `${toolingSha}:scripts/lib/release-publish-children.sh`],
     { allowFailure: true },
   );
+  const npmPublisher = await ctx.run(
+    "git",
+    ["show", `${toolingSha}:.github/workflows/openclaw-npm-release.yml`],
+    { allowFailure: true },
+  );
   ctx.state.capabilities = {
     parentSweepsStaleChildren:
       !ctx.options.dryRun &&
@@ -506,10 +520,10 @@ export async function probeCapabilities(ctx: ReleaseContext, toolingSha: string)
       !ctx.options.dryRun &&
       ((publisher.exitCode === 0 && publisher.stdout.includes("sync_beta_to_stable")) ||
         (children.exitCode === 0 && children.stdout.includes("sync_beta_to_stable"))),
-    parentApprovalReceipt:
-      publisher.exitCode === 0 &&
+    childNpmPublishEnvironment:
       !ctx.options.dryRun &&
-      publisher.stdout.includes("release-approval-receipt"),
+      npmPublisher.exitCode === 0 &&
+      npmPublisher.stdout.includes("environment: npm-publish"),
     closeoutResolvesWaivers:
       !ctx.options.dryRun &&
       closeout.exitCode === 0 &&
